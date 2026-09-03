@@ -439,6 +439,19 @@ textarea { resize: vertical; }
 }
 .header-button.danger:hover { background: #633039; }
 
+.header-button:disabled {
+  opacity: .38;
+  cursor: not-allowed;
+}
+
+.header-button:disabled:hover {
+  background: #1b2638;
+}
+
+.header-button.danger:disabled:hover {
+  background: #4b252b;
+}
+
 .hidden-file-input { display: none; }
 
 .status-message {

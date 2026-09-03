@@ -56,7 +56,8 @@
       source: 'inicio',
       sourceHandle: 'opt-inicio-1',
       target: 'final',
-      type: 'smoothstep'
+      type: 'default',
+      data: { lane: 0 }
     }
   ]);
 
@@ -128,7 +129,7 @@
     const targetNode = nodes.find((node) => node.id === edge.target);
     const option = sourceNode?.data.options.find((item) => item.id === edge.sourceHandle);
 
-    edges = edges.filter((item) => item.id !== edge.id);
+    edges = routeEdges(edges.filter((item) => item.id !== edge.id));
 
     nodes = nodes.map((node) => {
       if (node.id !== edge.source) return node;
@@ -297,9 +298,9 @@
       };
     });
 
-    edges = edges.filter(
+    edges = routeEdges(edges.filter(
       (edge) => !(edge.source === selectedId && edge.sourceHandle === optionId)
-    );
+    ));
   }
 
   function rawReferenceToLoadedNode(nodeId: string) {
@@ -349,57 +350,187 @@
         }
       }));
 
-    edges = edges.filter((edge) => edge.source !== deletedId && edge.target !== deletedId);
+    edges = routeEdges(edges.filter((edge) => edge.source !== deletedId && edge.target !== deletedId), nodes);
     selectedId = nodes[0]?.id ?? '';
     statusMessage = `Nodo borrado: ${node.data.title}`;
+  }
+
+  function estimatedNodeHeight(node: DialogueNode) {
+    return 145 + Math.max(1, node.data.options.length) * 34;
   }
 
   function layoutDialogueNodes(items: DialogueNode[]) {
     if (items.length === 0) return items;
 
-    const byId = new Map(items.map((node) => [node.id, node]));
-    const depth = new Map<string, number>();
-    const firstId = items[0].id;
-    const queue: string[] = [firstId];
-    depth.set(firstId, 0);
+    const NODE_WIDTH = 260;
+    const SIBLING_GAP = 110;
+    const ROOT_GAP = 180;
+    const VERTICAL_GAP = 150;
 
-    while (queue.length > 0) {
-      const id = queue.shift() as string;
-      const node = byId.get(id);
-      if (!node) continue;
-      const nextDepth = (depth.get(id) ?? 0) + 1;
+    const byId = new Map(items.map((node) => [node.id, node]));
+    const originalIndex = new Map(items.map((node, index) => [node.id, index]));
+    const depth = new Map<string, number>();
+    const children = new Map<string, string[]>();
+    const primaryParent = new Map<string, string>();
+    const roots: string[] = [];
+
+    function orderedTargets(node: DialogueNode) {
+      const seen = new Set<string>();
+      const result: string[] = [];
 
       for (const option of node.data.options) {
         const targetId = option.targetId;
-        if (!targetId || targetId === firstId || depth.has(targetId)) continue;
-        depth.set(targetId, nextDepth);
-        queue.push(targetId);
+        if (!targetId || targetId === node.id || !byId.has(targetId) || seen.has(targetId)) continue;
+        seen.add(targetId);
+        result.push(targetId);
+      }
+
+      return result;
+    }
+
+    function buildTree(rootId: string, baseDepth: number) {
+      const queue: string[] = [rootId];
+      depth.set(rootId, baseDepth);
+      roots.push(rootId);
+
+      while (queue.length > 0) {
+        const id = queue.shift() as string;
+        const node = byId.get(id);
+        if (!node) continue;
+
+        const nextDepth = (depth.get(id) ?? baseDepth) + 1;
+        const ownChildren: string[] = [];
+
+        // IMPORTANTE: recorremos las opciones en su orden real.
+        // El primer puerto reclama el primer hijo, el segundo el siguiente, etc.
+        for (const targetId of orderedTargets(node)) {
+          if (depth.has(targetId)) continue;
+
+          depth.set(targetId, nextDepth);
+          primaryParent.set(targetId, id);
+          ownChildren.push(targetId);
+          queue.push(targetId);
+        }
+
+        children.set(id, ownChildren);
       }
     }
 
-    let maxDepth = Math.max(0, ...depth.values());
-    for (const node of items) {
+    const firstId = items[0].id;
+    buildTree(firstId, 0);
+
+    const mainMaxDepth = Math.max(0, ...depth.values());
+    const disconnectedBaseDepth = mainMaxDepth + 1;
+
+    // Los nodos que no pertenecen al flujo principal se conservan como árboles separados,
+    // manteniendo el orden físico original del guion.
+    const remaining = [...items]
+      .filter((node) => !depth.has(node.id))
+      .sort((a, b) => (originalIndex.get(a.id) ?? 0) - (originalIndex.get(b.id) ?? 0));
+
+    for (const node of remaining) {
       if (!depth.has(node.id)) {
-        maxDepth += 1;
-        depth.set(node.id, maxDepth);
+        buildTree(node.id, disconnectedBaseDepth);
       }
     }
 
-    const rowsByDepth = new Map<number, number>();
+    const widthCache = new Map<string, number>();
 
-    return items.map((node) => {
-      const column = depth.get(node.id) ?? 0;
-      const row = rowsByDepth.get(column) ?? 0;
-      rowsByDepth.set(column, row + 1);
+    function subtreeWidth(id: string): number {
+      const cached = widthCache.get(id);
+      if (cached !== undefined) return cached;
+
+      const ownChildren = children.get(id) ?? [];
+      if (ownChildren.length === 0) {
+        widthCache.set(id, NODE_WIDTH);
+        return NODE_WIDTH;
+      }
+
+      const childrenWidth = ownChildren.reduce((sum, childId) => sum + subtreeWidth(childId), 0)
+        + Math.max(0, ownChildren.length - 1) * SIBLING_GAP;
+      const width = Math.max(NODE_WIDTH, childrenWidth);
+      widthCache.set(id, width);
+      return width;
+    }
+
+    const levelHeights = new Map<number, number>();
+    for (const node of items) {
+      const level = depth.get(node.id) ?? 0;
+      levelHeights.set(level, Math.max(levelHeights.get(level) ?? 0, estimatedNodeHeight(node)));
+    }
+
+    const maxDepth = Math.max(0, ...depth.values());
+    const levelY = new Map<number, number>();
+    let nextY = 80;
+
+    for (let level = 0; level <= maxDepth; level += 1) {
+      levelY.set(level, nextY);
+      nextY += (levelHeights.get(level) ?? 145) + VERTICAL_GAP;
+    }
+
+    const positions = new Map<string, { x: number; y: number }>();
+
+    function placeTree(id: string, left: number) {
+      const treeWidth = subtreeWidth(id);
+      const level = depth.get(id) ?? 0;
+      positions.set(id, {
+        x: left + (treeWidth - NODE_WIDTH) / 2,
+        y: levelY.get(level) ?? 80
+      });
+
+      const ownChildren = children.get(id) ?? [];
+      if (ownChildren.length === 0) return;
+
+      const totalChildrenWidth = ownChildren.reduce((sum, childId) => sum + subtreeWidth(childId), 0)
+        + Math.max(0, ownChildren.length - 1) * SIBLING_GAP;
+      let childLeft = left + (treeWidth - totalChildrenWidth) / 2;
+
+      for (const childId of ownChildren) {
+        placeTree(childId, childLeft);
+        childLeft += subtreeWidth(childId) + SIBLING_GAP;
+      }
+    }
+
+    let rootLeft = 80;
+    for (const rootId of roots) {
+      placeTree(rootId, rootLeft);
+      rootLeft += subtreeWidth(rootId) + ROOT_GAP;
+    }
+
+    return items.map((node) => ({
+      ...node,
+      position: positions.get(node.id) ?? node.position
+    }));
+  }
+
+  function routeEdges(items: Edge[], currentNodes = nodes) {
+    const byId = new Map(currentNodes.map((node) => [node.id, node]));
+    let forwardLane = 0;
+    let returnLane = 0;
+
+    return items.map((edge) => {
+      const source = byId.get(edge.source);
+      const target = byId.get(edge.target);
+      const isReturn = Boolean(source && target && target.position.y <= source.position.y);
+      const lane = isReturn ? returnLane++ : forwardLane++;
 
       return {
-        ...node,
-        position: {
-          x: 80 + column * 360,
-          y: 80 + row * 330
+        ...edge,
+        type: 'default',
+        data: {
+          ...(edge.data ?? {}),
+          lane
         }
       };
     });
+  }
+
+  function organizeGraph() {
+    nodes = layoutDialogueNodes(nodes);
+    edges = routeEdges(edges, nodes);
+    selectedEdgeId = '';
+    setConnectionHighlights();
+    statusMessage = 'Grafo ordenado';
   }
 
   function connectOption(connection: Connection) {
@@ -418,10 +549,9 @@
       (edge) => !(edge.source === source && edge.sourceHandle === optionId)
     );
 
-    edges = addEdge(connection, edges).map((edge) =>
-      edge.source === source && edge.sourceHandle === optionId
-        ? { ...edge, type: 'smoothstep' }
-        : edge
+    edges = routeEdges(
+      addEdge({ ...connection, type: 'default' }, edges),
+      nodes
     );
 
     nodes = nodes.map((node) => {
@@ -498,10 +628,13 @@
           source: node.id,
           sourceHandle: option.id,
           target: option.targetId,
-          type: 'smoothstep'
+          type: 'default',
+      data: { lane: 0 }
         });
       }
     }
+
+    edges = routeEdges(edges, nodes);
 
     parsedScript = parsed;
     selectedEdgeId = '';
@@ -539,13 +672,19 @@
       {#if statusMessage}
         <span class="status-message">{statusMessage}</span>
       {/if}
-      {#if selectedEdge}
-        <button
-          type="button"
-          class="header-button danger"
-          onclick={deleteSelectedConnection}
-        >Borrar conexión</button>
-      {/if}
+      <button
+        type="button"
+        class="header-button danger"
+        onclick={deleteSelectedNode}
+        disabled={!selectedNode || Boolean(selectedEdge) || selectedNode.data.initial || rawReferenceToLoadedNode(selectedNode.id)}
+      >Borrar nodo</button>
+      <button
+        type="button"
+        class="header-button danger"
+        onclick={deleteSelectedConnection}
+        disabled={!selectedEdge}
+      >Borrar conexión</button>
+      <button type="button" class="header-button" onclick={organizeGraph}>Ordenar</button>
       <button type="button" class="header-button" onclick={openFilePicker}>Abrir TXT</button>
       <button type="button" class="header-button primary" onclick={saveScript}>Guardar TXT</button>
       <input
@@ -635,15 +774,6 @@
           {#if selectedNode.data.initial}
             <div class="initial-info">▶ Nodo inicial · punto de entrada del diálogo · admite retornos</div>
           {/if}
-
-          <div class="node-actions">
-            <button
-              type="button"
-              class="danger-button"
-              onclick={deleteSelectedNode}
-              disabled={selectedNode.data.initial}
-            >Borrar nodo</button>
-          </div>
 
           <label>
             Nombre del nodo
