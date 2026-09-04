@@ -16,11 +16,20 @@ export type InspectorRequest = NodeEditIntent & {
   token: number;
 };
 
+export type InventoryEffectOperation = 'add' | 'remove';
+
+export type DialogueInventoryEffect = {
+  id: string;
+  operation: InventoryEffectOperation;
+  item: string;
+};
+
 export type DialogueOption = {
   id: string;
   text: string;
   targetId?: string;
   targetLabel?: string;
+  effects: DialogueInventoryEffect[];
 };
 
 export type DialogueCondition = {

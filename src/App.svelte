@@ -6,7 +6,8 @@
     addEdge,
     type Connection,
     type Edge,
-    type NodeEventWithPointer
+    type NodeEventWithPointer,
+    type Viewport
   } from '@xyflow/svelte';
   import OptionsNodeView from './lib/DialogueNode.svelte';
   import ConditionsNodeView from './lib/ConditionsNode.svelte';
@@ -18,6 +19,7 @@
     refreshNodeTypes,
     type DialogueNode,
     type InspectorRequest,
+    type InventoryEffectOperation,
     type NodeEditIntent,
     type VisualNodeKind
   } from './lib/dialogueGraph';
@@ -27,6 +29,11 @@
     type ParsedScript
   } from './lib/dialogueText';
   import { layoutDialogueNodes, routeEdges } from './lib/graphLayout';
+  import {
+    applyStoredPositions,
+    loadStoredLayout,
+    saveStoredLayout
+  } from './lib/layoutStorage';
 
   const nodeTypes = {
     options: OptionsNodeView,
@@ -51,7 +58,8 @@
             id: 'opt-inicio-1',
             text: 'Salir',
             targetId: 'final',
-            targetLabel: 'FINAL'
+            targetLabel: 'FINAL',
+            effects: []
           }
         ]
       }
@@ -86,6 +94,7 @@
   let selectedEdgeId = $state('');
   let nextNodeNumber = $state(1);
   let nextOptionNumber = $state(1);
+  let nextEffectNumber = $state(1);
   let nextConditionNumber = $state(1);
   let canvasElement = $state<HTMLElement | null>(null);
   let fileInput = $state<HTMLInputElement | null>(null);
@@ -97,6 +106,9 @@
   let inspectorRequest = $state.raw<InspectorRequest | null>(null);
   let inspectorRequestToken = $state(0);
   let centerRequestToken = $state(0);
+  let viewportRestoreToken = $state(0);
+  let viewportToRestore = $state.raw<Viewport | null>(null);
+  let currentViewport = $state.raw<Viewport>({ x: 0, y: 0, zoom: 1 });
 
   let selectedNode = $derived(nodes.find((node) => node.id === selectedId));
   let selectedEdge = $derived(edges.find((edge) => edge.id === selectedEdgeId));
@@ -136,11 +148,29 @@
         options: node.data.options.map((option) => ({
           id: option.id,
           text: option.text,
-          targetLabel: option.targetLabel
+          targetLabel: option.targetLabel,
+          effects: option.effects.map((effect) => ({
+            operation: effect.operation,
+            item: effect.item
+          }))
         }))
       }))
     )
   );
+
+  function saveCurrentLayout(viewport = currentViewport) {
+    if (!parsedScript) return;
+    saveStoredLayout(currentFilename, nodes, viewport);
+  }
+
+  function rememberViewport(_event: MouseEvent | TouchEvent | null, viewport: Viewport) {
+    currentViewport = viewport;
+    saveCurrentLayout(viewport);
+  }
+
+  function rememberNodePositions() {
+    saveCurrentLayout();
+  }
 
   function selectedEdgeIsEditable() {
     return selectedEdge?.data?.role === 'option';
@@ -321,6 +351,7 @@
         }
       });
     });
+    if (field === 'title') saveCurrentLayout();
   }
 
   function createNodeAt(x: number, y: number, kind: VisualNodeKind) {
@@ -356,6 +387,7 @@
     statusMessage = isConditions
       ? 'Nodo de condiciones creado. Completa condición y destino en el inspector.'
       : 'Nodo de opciones creado.';
+    saveCurrentLayout();
   }
 
   function startPaletteDrag(event: DragEvent, kind: VisualNodeKind) {
@@ -392,12 +424,13 @@
         ...node,
         data: {
           ...node.data,
-          options: [...node.data.options, { id: optionId, text: `Opción ${nextOptionNumber}` }]
+          options: [...node.data.options, { id: optionId, text: `Opción ${nextOptionNumber}`, effects: [] }]
         }
       };
     }));
 
     nextOptionNumber += 1;
+    saveCurrentLayout();
     return optionId;
   }
 
@@ -409,6 +442,125 @@
           data: {
             ...node.data,
             options: node.data.options.map((option) => option.id === optionId ? { ...option, text } : option)
+          }
+        }
+    );
+  }
+
+  function updateOptionTarget(optionId: string, value: string) {
+    const targetLabel = value.trim();
+    const targetId = resolveTargetId(targetLabel);
+
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            options: node.data.options.map((option) =>
+              option.id === optionId
+                ? { ...option, targetLabel: targetLabel || undefined, targetId }
+                : option
+            )
+          }
+        }
+    );
+
+    clearConditionPreview();
+    const optionEdges = edges.filter((edge) =>
+      !(edge.data?.role === 'option' && edge.source === selectedId && edge.sourceHandle === optionId)
+    );
+
+    if (targetId) {
+      edges = routeEdges(addEdge({
+        id: `${selectedId}-${optionId}-${targetId}`,
+        source: selectedId,
+        sourceHandle: optionId,
+        target: targetId,
+        type: 'default',
+        data: { role: 'option' }
+      }, optionEdges), nodes);
+    } else {
+      edges = routeEdges(optionEdges, nodes);
+    }
+
+    selectedEdgeId = '';
+    setConnectionHighlights();
+    if (showAllConditionJumps) refreshConditionPreviews();
+  }
+
+  function addOptionEffect(optionId: string): string | undefined {
+    if (!selectedNode) return undefined;
+    const effectId = `effect-${nextEffectNumber}`;
+
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            options: node.data.options.map((option) =>
+              option.id === optionId
+                ? {
+                    ...option,
+                    effects: [
+                      ...option.effects,
+                      { id: effectId, operation: 'add', item: 'objeto' }
+                    ]
+                  }
+                : option
+            )
+          }
+        }
+    );
+
+    nextEffectNumber += 1;
+    return effectId;
+  }
+
+  function updateOptionEffect(
+    optionId: string,
+    effectId: string,
+    field: 'operation' | 'item',
+    value: string
+  ) {
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            options: node.data.options.map((option) =>
+              option.id !== optionId
+                ? option
+                : {
+                    ...option,
+                    effects: option.effects.map((effect) =>
+                      effect.id !== effectId
+                        ? effect
+                        : field === 'operation'
+                          ? { ...effect, operation: value as InventoryEffectOperation }
+                          : { ...effect, item: value.replace(/^\s*[+-]/, '').trim() }
+                    )
+                  }
+            )
+          }
+        }
+    );
+  }
+
+  function removeOptionEffect(optionId: string, effectId: string) {
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            options: node.data.options.map((option) =>
+              option.id === optionId
+                ? { ...option, effects: option.effects.filter((effect) => effect.id !== effectId) }
+                : option
+            )
           }
         }
     );
@@ -431,6 +583,7 @@
     edges = routeEdges(edges.filter(
       (edge) => !(edge.source === selectedId && edge.sourceHandle === optionId)
     ), nodes);
+    saveCurrentLayout();
   }
 
   function addCondition(): string | undefined {
@@ -455,6 +608,7 @@
       };
     }));
     nextConditionNumber += 1;
+    saveCurrentLayout();
     return conditionId;
   }
 
@@ -512,6 +666,7 @@
     }));
     if (showAllConditionJumps) refreshConditionPreviews();
     else clearConditionPreview();
+    saveCurrentLayout();
   }
 
   function rawReferenceToLoadedNode(nodeId: string) {
@@ -571,6 +726,7 @@
     setSelectedNodeId(nodes[0]?.id ?? '');
     selectedEdgeId = '';
     statusMessage = `Nodo borrado: ${node.data.title}`;
+    saveCurrentLayout();
   }
 
   function deleteSelectedConnection() {
@@ -609,6 +765,7 @@
     selectedEdgeId = '';
     setConnectionHighlights();
     statusMessage = 'Grafo ordenado';
+    saveCurrentLayout();
   }
 
   function centerGraph() {
@@ -687,7 +844,12 @@
           targetId: option.targetLabel
             ? idByLabel.get(option.targetLabel.toLowerCase())
             : undefined,
-          targetLabel: option.targetLabel
+          targetLabel: option.targetLabel,
+          effects: option.effects.map((effect) => ({
+            id: effect.id,
+            operation: effect.operation,
+            item: effect.item
+          }))
         }))
       };
 
@@ -700,7 +862,8 @@
     });
 
     showAllConditionJumps = false;
-    nodes = layoutDialogueNodes(loadedNodes);
+    const storedLayout = loadStoredLayout(file.name);
+    nodes = applyStoredPositions(layoutDialogueNodes(loadedNodes), storedLayout);
     edges = [];
     for (const node of nodes) {
       for (const option of node.data.options) {
@@ -720,13 +883,22 @@
     parsedScript = parsed;
     selectedEdgeId = '';
     currentFilename = file.name;
+    // Al abrir un guion conservamos las posiciones guardadas, pero siempre
+    // encuadramos todo el grafo para que el usuario vea el contenido completo.
+    currentViewport = { x: 0, y: 0, zoom: 1 };
+    viewportToRestore = null;
+    centerRequestToken += 1;
     setSelectedNodeId(nodes[0].id);
     nextNodeNumber = nodes.length + 1;
     nextOptionNumber = parsed.nodes.reduce((total, node) => total + node.options.length, 0) + 1;
+    nextEffectNumber = parsed.nodes.reduce(
+      (total, node) => total + node.options.reduce((sum, option) => sum + option.effects.length, 0),
+      0
+    ) + 1;
     nextConditionNumber = parsed.nodes.reduce((total, node) => total + node.conditions.length, 0) + 1;
     sidebarMode = 'txt';
     const conditionCount = parsed.nodes.reduce((total, node) => total + node.conditions.length, 0);
-    statusMessage = `Cargado: ${file.name}${conditionCount ? ` · ${conditionCount} condición${conditionCount === 1 ? '' : 'es'}` : ''}`;
+    statusMessage = `Cargado: ${file.name}${storedLayout ? ' · disposición recuperada' : ''}${conditionCount ? ` · ${conditionCount} condición${conditionCount === 1 ? '' : 'es'}` : ''}`;
     input.value = '';
   }
 
@@ -824,8 +996,10 @@
         bind:edges
         {nodeTypes}
         onnodeclick={selectNode}
+        onnodedragstop={rememberNodePositions}
         onedgeclick={selectEdge}
         onpaneclick={clearConditionPreview}
+        onmoveend={rememberViewport}
         onconnect={connectOption}
         fitView
         minZoom={0.4}
@@ -834,7 +1008,11 @@
         deleteKey={null}
         connectionRadius={28}
       >
-        <ViewportActions requestToken={centerRequestToken} />
+        <ViewportActions
+          requestToken={centerRequestToken}
+          restoreToken={viewportRestoreToken}
+          restoreViewport={viewportToRestore}
+        />
         <Background gap={20} size={1} />
         <Controls />
       </SvelteFlow>
@@ -869,6 +1047,10 @@
           onRemoveCondition={removeCondition}
           onAddOption={addOption}
           onUpdateOption={updateOption}
+          onUpdateOptionTarget={updateOptionTarget}
+          onAddOptionEffect={addOptionEffect}
+          onUpdateOptionEffect={updateOptionEffect}
+          onRemoveOptionEffect={removeOptionEffect}
           onRemoveOption={removeOption}
         />
       {/if}

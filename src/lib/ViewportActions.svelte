@@ -1,9 +1,19 @@
 <script lang="ts">
-  import { useSvelteFlow } from '@xyflow/svelte';
+  import { useSvelteFlow, type Viewport } from '@xyflow/svelte';
 
-  let { requestToken = 0 }: { requestToken?: number } = $props();
-  const { fitView } = useSvelteFlow();
+  let {
+    requestToken = 0,
+    restoreToken = 0,
+    restoreViewport = null
+  }: {
+    requestToken?: number;
+    restoreToken?: number;
+    restoreViewport?: Viewport | null;
+  } = $props();
+
+  const { fitView, setViewport } = useSvelteFlow();
   let lastRequestToken = $state(0);
+  let lastRestoreToken = $state(0);
 
   $effect(() => {
     const token = requestToken;
@@ -12,6 +22,17 @@
 
     queueMicrotask(() => {
       fitView({ padding: 0.14, duration: 280 });
+    });
+  });
+
+  $effect(() => {
+    const token = restoreToken;
+    const viewport = restoreViewport;
+    if (!token || token === lastRestoreToken || !viewport) return;
+    lastRestoreToken = token;
+
+    queueMicrotask(() => {
+      setViewport(viewport, { duration: 0 });
     });
   });
 </script>

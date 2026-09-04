@@ -5,7 +5,7 @@
     type NodeProps,
     useUpdateNodeInternals
   } from '@xyflow/svelte';
-  import type { DialogueNode, NodeEditIntent } from './dialogueGraph';
+  import type { DialogueNode, DialogueOption, NodeEditIntent } from './dialogueGraph';
 
   let { id, data }: NodeProps<DialogueNode> = $props();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -39,8 +39,16 @@
     data.onInspectorNavigate?.(id, { ...intent, focus: true });
   }
 
+  function optionEffectsSummary(option: DialogueOption) {
+    return option.effects
+      .filter((effect) => effect.item.trim())
+      .map((effect) => `${effect.operation === 'add' ? '+' : '-'}${effect.item.trim()}`)
+      .join(', ');
+  }
+
   $effect(() => {
     data.options.length;
+    data.options.reduce((total, option) => total + option.effects.length, 0);
     data.conditions.length;
     queueMicrotask(() => updateNodeInternals(id));
   });
@@ -115,6 +123,9 @@
             {#if option.targetLabel}→ {option.targetLabel}{:else}→ —{/if}
           </span>
         </div>
+        {#if optionEffectsSummary(option)}
+          <div class="option-effects-summary">[{optionEffectsSummary(option)}]</div>
+        {/if}
       </div>
     {/each}
 
@@ -134,3 +145,17 @@
     <div class="node-no-options">Sin opciones</div>
   {/if}
 </div>
+
+
+<style>
+  .option-effects-summary {
+    margin: 4px 0 0 24px;
+    overflow: hidden;
+    color: #5f725f;
+    font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    font-size: 9px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>

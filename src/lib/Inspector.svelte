@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { DialogueNode, InspectorRequest } from './dialogueGraph';
+  import type { DialogueNode, InspectorRequest, InventoryEffectOperation } from './dialogueGraph';
+  import DestinationPicker from './DestinationPicker.svelte';
 
   type Props = {
     node?: DialogueNode;
@@ -12,6 +13,10 @@
     onRemoveCondition: (conditionId: string) => void;
     onAddOption: () => string | undefined;
     onUpdateOption: (optionId: string, value: string) => void;
+    onUpdateOptionTarget: (optionId: string, value: string) => void;
+    onAddOptionEffect: (optionId: string) => string | undefined;
+    onUpdateOptionEffect: (optionId: string, effectId: string, field: 'operation' | 'item', value: string) => void;
+    onRemoveOptionEffect: (optionId: string, effectId: string) => void;
     onRemoveOption: (optionId: string) => void;
   };
 
@@ -26,6 +31,10 @@
     onRemoveCondition,
     onAddOption,
     onUpdateOption,
+    onUpdateOptionTarget,
+    onAddOptionEffect,
+    onUpdateOptionEffect,
+    onRemoveOptionEffect,
     onRemoveOption
   }: Props = $props();
 
@@ -62,7 +71,11 @@
         ? `condition:${current.itemId}:target`
         : `condition:${current.itemId}:items`;
     }
-    if (current.section === 'options' && current.itemId) return `option:${current.itemId}`;
+    if (current.section === 'options' && current.itemId) {
+      return current.field === 'target'
+        ? `option:${current.itemId}:target`
+        : `option:${current.itemId}`;
+    }
     return '';
   }
 
@@ -100,17 +113,11 @@
     if (id) focusKey(`option:${id}`);
   }
 
-  let openDestinationConditionId = $state('');
-
-  function toggleDestinationPicker(conditionId: string) {
-    openDestinationConditionId = openDestinationConditionId === conditionId ? '' : conditionId;
+  function addOptionEffectAndFocus(optionId: string) {
+    const effectId = onAddOptionEffect(optionId);
+    if (effectId) focusKey(`option:${optionId}:effect:${effectId}:item`);
   }
 
-  function chooseDestination(conditionId: string, title: string) {
-    onUpdateConditionTarget(conditionId, title);
-    openDestinationConditionId = '';
-    focusKey(`condition:${conditionId}:target`);
-  }
 </script>
 
 <div class="inspector-component" bind:this={root}>
@@ -198,46 +205,12 @@
                 </label>
                 <label class="compact-label">
                   Destino
-                  <div class="editable-combobox-wrap">
-                    <div class="editable-combobox">
-                      <input
-                        data-focus-key={`condition:${condition.id}:target`}
-                        value={condition.targetLabel ?? ''}
-                        placeholder="Escribe o elige un nodo"
-                        autocomplete="off"
-                        oninput={(event) => onUpdateConditionTarget(condition.id, event.currentTarget.value)}
-                      />
-                      <button
-                        type="button"
-                        class="combobox-trigger"
-                        class:open={openDestinationConditionId === condition.id}
-                        title="Mostrar todos los nodos disponibles"
-                        aria-label="Mostrar todos los nodos disponibles"
-                        onclick={() => toggleDestinationPicker(condition.id)}
-                      >▾</button>
-                    </div>
-
-                    {#if openDestinationConditionId === condition.id}
-                      <div class="destination-menu" role="listbox" aria-label="Nodos disponibles">
-                        {#if availableNodeTitles.length === 0}
-                          <div class="destination-menu-empty">No hay nodos disponibles</div>
-                        {:else}
-                          {#each availableNodeTitles as title}
-                            <button
-                              type="button"
-                              class:current={title === condition.targetLabel}
-                              class="destination-menu-item"
-                              onmousedown={(event) => event.preventDefault()}
-                              onclick={() => chooseDestination(condition.id, title)}
-                            >
-                              <span>{title}</span>
-                              {#if title === condition.targetLabel}<small>actual</small>{/if}
-                            </button>
-                          {/each}
-                        {/if}
-                      </div>
-                    {/if}
-                  </div>
+                  <DestinationPicker
+                    value={condition.targetLabel ?? ''}
+                    {availableNodeTitles}
+                    focusKey={`condition:${condition.id}:target`}
+                    onChange={(value) => onUpdateConditionTarget(condition.id, value)}
+                  />
                 </label>
               </div>
             {/each}
@@ -279,8 +252,67 @@
                     onclick={() => onRemoveOption(option.id)}
                   >×</button>
                 </div>
-                <div class="option-destination">
-                  {#if option.targetLabel}→ {option.targetLabel}{:else}Sin conectar{/if}
+                <label class="compact-label option-destination-editor">
+                  Destino
+                  <DestinationPicker
+                    value={option.targetLabel ?? ''}
+                    {availableNodeTitles}
+                    focusKey={`option:${option.id}:target`}
+                    onChange={(value) => onUpdateOptionTarget(option.id, value)}
+                  />
+                </label>
+
+                <div class="option-inventory-editor">
+                  <div class="option-inventory-heading">
+                    <span>Inventario al elegir</span>
+                    <button
+                      type="button"
+                      class="small-button inventory-add-button"
+                      onclick={() => addOptionEffectAndFocus(option.id)}
+                    >+ Efecto</button>
+                  </div>
+
+                  {#if option.effects.length === 0}
+                    <div class="inventory-empty">Sin cambios de inventario.</div>
+                  {:else}
+                    <div class="inventory-effect-list">
+                      {#each option.effects as effect}
+                        <div class="inventory-effect-row">
+                          <select
+                            aria-label="Dar o quitar objeto"
+                            value={effect.operation}
+                            onchange={(event) => onUpdateOptionEffect(
+                              option.id,
+                              effect.id,
+                              'operation',
+                              event.currentTarget.value as InventoryEffectOperation
+                            )}
+                          >
+                            <option value="add">Dar +</option>
+                            <option value="remove">Quitar −</option>
+                          </select>
+                          <input
+                            data-focus-key={`option:${option.id}:effect:${effect.id}:item`}
+                            value={effect.item}
+                            placeholder="objeto"
+                            oninput={(event) => onUpdateOptionEffect(
+                              option.id,
+                              effect.id,
+                              'item',
+                              event.currentTarget.value
+                            )}
+                          />
+                          <button
+                            type="button"
+                            class="icon-danger-button small-x"
+                            title="Borrar efecto"
+                            aria-label="Borrar efecto"
+                            onclick={() => onRemoveOptionEffect(option.id, effect.id)}
+                          >×</button>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
               </div>
             {/each}
@@ -294,3 +326,62 @@
     </div>
   {/if}
 </div>
+
+
+<style>
+  .option-destination-editor {
+    margin-top: 8px;
+  }
+
+  .option-inventory-editor {
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid #e1e6ed;
+  }
+
+  .option-inventory-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 7px;
+    color: #677388;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .inventory-add-button {
+    padding: 4px 7px;
+    font-size: 10px;
+    text-transform: none;
+  }
+
+  .inventory-empty {
+    color: #929baa;
+    font-size: 10px;
+  }
+
+  .inventory-effect-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .inventory-effect-row {
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr) 27px;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .inventory-effect-row select,
+  .inventory-effect-row input {
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid #cbd2df;
+    border-radius: 7px;
+    background: #fff;
+    color: #26344a;
+    font-size: 11px;
+  }
+</style>

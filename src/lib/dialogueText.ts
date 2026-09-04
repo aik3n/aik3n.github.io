@@ -1,9 +1,19 @@
+export type InventoryEffectOperation = 'add' | 'remove';
+
+export type ParsedInventoryEffect = {
+  id: string;
+  operation: InventoryEffectOperation;
+  item: string;
+};
+
 export type ParsedOption = {
   id: string;
   text: string;
   targetLabel?: string;
+  effects: ParsedInventoryEffect[];
   originalText: string;
   originalTargetLabel?: string;
+  originalEffects: ParsedInventoryEffect[];
   raw: string;
   tail: string;
 };
@@ -43,10 +53,16 @@ export type ParsedScript = {
   newline: '\n' | '\r\n';
 };
 
+export type SerializableInventoryEffect = {
+  operation: InventoryEffectOperation;
+  item: string;
+};
+
 export type SerializableOption = {
   id: string;
   text: string;
   targetLabel?: string;
+  effects: SerializableInventoryEffect[];
 };
 
 export type SerializableCondition = {
@@ -90,6 +106,35 @@ function parseHeader(line: string) {
   };
 }
 
+function parseEffectBlock(code: string, idPrefix: string) {
+  const match = code.match(/\[([^\]]*)\]/);
+  if (!match || match.index === undefined) return { effects: [] as ParsedInventoryEffect[], remaining: code };
+
+  const tokens = match[1]
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (tokens.length === 0 || tokens.some((token) => !/^[+-].+/.test(token))) {
+    return { effects: [] as ParsedInventoryEffect[], remaining: code };
+  }
+
+  const effects = tokens.map((token, index) => ({
+    id: `${idPrefix}-effect-${index + 1}`,
+    operation: token.startsWith('+') ? 'add' as const : 'remove' as const,
+    item: token.slice(1)
+  }));
+
+  const prefix = code.slice(0, match.index);
+  const suffix = code.slice(match.index + match[0].length);
+  const remaining = `${prefix.trim() ? prefix : ''}${suffix}`;
+  return { effects, remaining };
+}
+
+function cloneEffects(effects: ParsedInventoryEffect[]): ParsedInventoryEffect[] {
+  return effects.map((effect) => ({ ...effect }));
+}
+
 function parseOptionLine(line: string, id: string): ParsedOption {
   const { code, comment } = splitInlineComment(line);
   const afterEquals = code.replace(/^\s*=\s*/, '');
@@ -97,7 +142,7 @@ function parseOptionLine(line: string, id: string): ParsedOption {
 
   let textPart = afterEquals;
   let targetLabel: string | undefined;
-  let tailBeforeComment = '';
+  let effectArea = '';
 
   if (jumpIndex >= 0) {
     textPart = afterEquals.slice(0, jumpIndex);
@@ -106,25 +151,29 @@ function parseOptionLine(line: string, id: string): ParsedOption {
 
     if (destinationMatch) {
       targetLabel = destinationMatch[1];
-      tailBeforeComment = destinationMatch[2] ?? '';
+      effectArea = destinationMatch[2] ?? '';
     }
   } else {
-    const effectMatch = textPart.match(/^(.*?)(\s*\[[^\]]*\]\s*)$/);
-    if (effectMatch) {
-      textPart = effectMatch[1];
-      tailBeforeComment = effectMatch[2];
+    const effectStart = afterEquals.indexOf('[');
+    if (effectStart >= 0) {
+      textPart = afterEquals.slice(0, effectStart);
+      effectArea = afterEquals.slice(effectStart);
     }
   }
 
+  const parsedEffects = parseEffectBlock(effectArea, id);
+  const effects = parsedEffects.effects;
   const text = textPart.trim();
-  const tail = `${tailBeforeComment}${comment}`;
+  const tail = `${parsedEffects.remaining}${comment}`;
 
   return {
     id,
     text,
     targetLabel,
+    effects,
     originalText: text,
     originalTargetLabel: targetLabel,
+    originalEffects: cloneEffects(effects),
     raw: line,
     tail
   };
@@ -267,14 +316,28 @@ function rewriteRawDestinations(raw: string, renameByOriginal: Map<string, strin
   return `${rewritten}${comment}`;
 }
 
+function sameEffects(a: SerializableInventoryEffect[], b: ParsedInventoryEffect[]) {
+  return a.length === b.length && a.every((effect, index) =>
+    effect.operation === b[index]?.operation && effect.item === b[index]?.item
+  );
+}
+
+function serializeEffects(effects: SerializableInventoryEffect[]) {
+  const tokens = effects
+    .filter((effect) => effect.item.trim())
+    .map((effect) => `${effect.operation === 'add' ? '+' : '-'}${effect.item.trim()}`);
+  return tokens.length ? ` [${tokens.join(', ')}]` : '';
+}
+
 function serializeLoadedOption(option: SerializableOption, parsed: ParsedOption) {
   const sameText = option.text === parsed.originalText;
   const sameTarget = (option.targetLabel ?? '') === (parsed.originalTargetLabel ?? '');
+  const sameInventoryEffects = sameEffects(option.effects, parsed.originalEffects);
 
-  if (sameText && sameTarget) return parsed.raw;
+  if (sameText && sameTarget && sameInventoryEffects) return parsed.raw;
 
   const destination = option.targetLabel ? ` > ${option.targetLabel}` : '';
-  return `= ${option.text}${destination}${parsed.tail}`;
+  return `= ${option.text}${destination}${serializeEffects(option.effects)}${parsed.tail}`;
 }
 
 function sameItems(a: string[], b: string[]) {
@@ -309,7 +372,7 @@ function serializeNewNode(node: SerializableNode): string[] {
   if (node.options.length > 0) {
     groups.push(node.options.map((option) => {
       const destination = option.targetLabel ? ` > ${option.targetLabel}` : '';
-      return `= ${option.text}${destination}`;
+      return `= ${option.text}${destination}${serializeEffects(option.effects)}`;
     }));
   }
 
@@ -422,7 +485,7 @@ export function serializeDialogueText(
     for (const option of current.options) {
       if (tokenOptionIds.has(option.id)) continue;
       const destination = option.targetLabel ? ` > ${option.targetLabel}` : '';
-      output.push(`= ${option.text}${destination}`);
+      output.push(`= ${option.text}${destination}${serializeEffects(option.effects)}`);
     }
   }
 
