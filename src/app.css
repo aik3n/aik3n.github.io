@@ -1177,145 +1177,6 @@ textarea { resize: vertical; }
 }
 
 
-/* 048: comprobar Validar antes de publicar */
-.header-button.validate-official-button {
-  border-color: #5d7f69;
-  background: #294535;
-  color: #e8fff0;
-}
-
-.header-button.validate-official-button:hover {
-  background: #345a43;
-}
-
-.header-button.validate-official-button:disabled {
-  background: #294535;
-}
-
-.validate-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 100000;
-  display: grid;
-  place-items: center;
-  padding: 22px;
-  background: rgb(17 24 39 / 58%);
-}
-
-.validate-dialog {
-  width: min(470px, 100%);
-  padding: 20px;
-  border: 1px solid #cbd2df;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 22px 60px rgb(15 23 42 / 28%);
-}
-
-.validate-dialog-heading {
-  display: grid;
-  gap: 3px;
-  margin-bottom: 16px;
-}
-
-.validate-dialog-heading strong {
-  color: #172033;
-  font-size: 18px;
-}
-
-.validate-dialog-heading span {
-  color: #697386;
-  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-}
-
-.validate-dialog-text {
-  margin: 0;
-  color: #626c80;
-  font-size: 13px;
-}
-
-.validate-result {
-  display: grid;
-  gap: 6px;
-  padding: 13px 14px;
-  border: 1px solid;
-  border-radius: 9px;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.validate-result strong {
-  color: inherit;
-}
-
-.validate-result span {
-  color: inherit;
-}
-
-.validate-result-warning {
-  border-color: #e0b457;
-  background: #fff8e8;
-  color: #765514;
-}
-
-.validate-result-new {
-  border-color: #8bb89a;
-  background: #eef9f1;
-  color: #285b39;
-}
-
-.validate-result-error {
-  border-color: #d89b9b;
-  background: #fff1f1;
-  color: #8a3030;
-}
-
-.validate-dialog-note {
-  margin-top: 14px;
-  color: #7b8497;
-  font-size: 11px;
-}
-
-.validate-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 18px;
-}
-
-.validate-dialog-actions .header-button {
-  min-width: 90px;
-}
-
-
-/* 051: nombre editable en Validar */
-.validate-filename-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.validate-filename-input {
-  min-width: 0;
-  margin: 0;
-  padding: 8px 10px;
-  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-}
-
-.validate-result-pending {
-  border-color: #cbd2df;
-  background: #f5f7fb;
-  color: #626c80;
-}
-
-@media (max-width: 560px) {
-  .validate-filename-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-
 /* 052: nombre del guion editable en la cabecera */
 .brand-filename-input {
   width: min(260px, 28vw);
@@ -1530,4 +1391,19 @@ main.workspace {
 .brand-block {
   align-items: center;
   flex: 0 0 auto;
+}
+
+/* 067: estilo Publicar oficial */
+.header-button.publish-official-button {
+  border-color: #5d7f69;
+  background: #294535;
+  color: #e8fff0;
+}
+
+.header-button.publish-official-button:hover:not(:disabled) {
+  background: #345a43;
+}
+
+.header-button.publish-official-button:disabled {
+  background: #294535;
 }

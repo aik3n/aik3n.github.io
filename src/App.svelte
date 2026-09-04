@@ -40,6 +40,9 @@
     conditions: ConditionsNodeView
   };
 
+  // 066: envio directo por Worker
+  const PUBLISHER_URL = 'https://zemobida-publish.sam-cdi110.workers.dev';
+
   let nodes = $state.raw<DialogueNode[]>([
     {
       id: 'inicio',
@@ -123,17 +126,14 @@
 
   // 061: limpieza de restos de UI
 
-  // 048: modo admin temporal + comprobación de publicación oficial.
-  // No publica nada todavía: sólo mira si el nombre ya existe.
+  // 066: envío simple; usuario → propuestas, admin → oficiales.
+  let publishBusy = $state(false);
+
+  // 067: limpieza de Validar antiguo
   let isAdminSession = $state(
     typeof sessionStorage !== 'undefined'
       && sessionStorage.getItem('zenode:admin') === 'true'
   );
-  let validateOpen = $state(false);
-  let validateChecking = $state(false);
-  let validateExists = $state<boolean | null>(null);
-  let validateError = $state('');
-  let validateFilename = $state('');
 
   let selectedNode = $derived(nodes.find((node) => node.id === selectedId));
   let selectedEdge = $derived(edges.find((edge) => edge.id === selectedEdgeId));
@@ -196,72 +196,6 @@
       editableScriptText = serialized;
     }
   });
-
-  async function checkValidateFilename() {
-    const filename = validateFilename.trim();
-    validateError = '';
-    validateExists = null;
-
-    if (!filename) {
-      validateError = 'Escribe un nombre para el guion.';
-      return;
-    }
-
-    validateChecking = true;
-
-    try {
-      const encodedPath = filename
-        .split('/')
-        .map((part) => encodeURIComponent(part))
-        .join('/');
-
-      const response = await fetch(
-        `https://api.github.com/repos/aik3n/ZeMobida_guiones/contents/${encodedPath}?ref=main`,
-        {
-          headers: {
-            Accept: 'application/vnd.github+json'
-          }
-        }
-      );
-
-      if (response.status === 404) {
-        validateExists = false;
-        return;
-      }
-
-      if (!response.ok) {
-        if (response.status === 403 || response.status === 429) {
-          throw new Error(
-            'GitHub ha limitado temporalmente las consultas. Prueba de nuevo más tarde.'
-          );
-        }
-
-        throw new Error(
-          `No se pudo comprobar el guion oficial (${response.status}).`
-        );
-      }
-
-      validateExists = true;
-    } catch (error) {
-      validateError = error instanceof Error
-        ? error.message
-        : 'No se pudo comprobar el guion oficial.';
-    } finally {
-      validateChecking = false;
-    }
-  }
-
-  async function validateCurrentScript() {
-    if (!isAdminSession) return;
-
-    validateOpen = true;
-    validateFilename = (currentFilename || 'guion.txt').trim();
-    await checkValidateFilename();
-  }
-
-  function closeValidateDialog() {
-    validateOpen = false;
-  }
 
   function saveCurrentLayout(viewport = currentViewport) {
     if (!parsedScript) return;
@@ -1429,6 +1363,79 @@
     input.value = '';
   }
 
+  async function publishCurrentScript(target: 'proposal' | 'official') {
+    if (publishBusy) return;
+
+    const filename = (currentFilename || 'guion.txt').trim();
+    const content = editableScriptText;
+
+    if (!/^[A-Za-z0-9._-]+\.txt$/i.test(filename)) {
+      statusMessage =
+        'Nombre no válido: usa letras, números, punto, guion o guion bajo y termina en .txt';
+      return;
+    }
+
+    if (!content.trim()) {
+      statusMessage = 'No se puede enviar un guion vacío.';
+      return;
+    }
+
+    publishBusy = true;
+    statusMessage =
+      target === 'official'
+        ? `Publicando oficial: ${filename}…`
+        : `Enviando propuesta: ${filename}…`;
+
+    try {
+      const response = await fetch(`${PUBLISHER_URL}/${target}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          filename,
+          content
+        })
+      });
+
+      let result: {
+        ok?: boolean;
+        error?: string;
+        overwritten?: boolean;
+      } = {};
+
+      try {
+        result = await response.json();
+      } catch {
+        // Si el Worker devuelve algo inesperado, usamos el estado HTTP.
+      }
+
+      if (!response.ok || !result.ok) {
+        throw new Error(
+          result.error ||
+          `No se pudo enviar el guion (${response.status}).`
+        );
+      }
+
+      if (target === 'official') {
+        statusMessage = result.overwritten
+          ? `Oficial actualizado: ${filename}`
+          : `Oficial publicado: ${filename}`;
+      } else {
+        statusMessage = result.overwritten
+          ? `Propuesta actualizada: ${filename}`
+          : `Propuesta enviada: ${filename}`;
+      }
+    } catch (error) {
+      statusMessage =
+        error instanceof Error
+          ? `Error de envío: ${error.message}`
+          : 'Error de envío.';
+    } finally {
+      publishBusy = false;
+    }
+  }
+
   function saveScript() {
     const blob = new Blob([editableScriptText], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -1510,12 +1517,21 @@
       {#if isAdminSession}
         <button
           type="button"
-          class="header-button validate-official-button"
-          onclick={validateCurrentScript}
-          disabled={validateChecking}
-        >✓ Validar</button>
+          class="header-button publish-official-button"
+          onclick={() => publishCurrentScript('official')}
+          disabled={publishBusy}
+          title="Enviar este guion a los oficiales"
+        >{publishBusy ? 'Publicando…' : 'Publicar oficial'}</button>
+      {:else}
+        <button
+          type="button"
+          class="header-button primary"
+          onclick={() => publishCurrentScript('proposal')}
+          disabled={publishBusy}
+          title="Enviar este guion como propuesta"
+        >{publishBusy ? 'Enviando…' : 'Enviar propuesta'}</button>
       {/if}
-      <button type="button" class="header-button primary" onclick={saveScript}>Guardar TXT</button>
+      <button type="button" class="header-button" onclick={saveScript}>Guardar TXT</button>
       <input
         class="hidden-file-input"
         bind:this={fileInput}
@@ -1525,71 +1541,6 @@
       />
     </div>
   </header>
-
-  {#if validateOpen}
-    <div class="validate-overlay">
-      <div class="validate-dialog">
-        <div class="validate-dialog-heading">
-          <strong>Validar guion</strong>
-          <span>{validateFilename || currentFilename}</span>
-        </div>
-
-        {#if validateChecking}
-          <p class="validate-dialog-text">Comprobando los guiones oficiales…</p>
-        {:else if validateError}
-          <div class="validate-result validate-result-error">
-            {validateError}
-          </div>
-        {:else if validateExists === true}
-          <div class="validate-result validate-result-warning">
-            <strong>Ya existe {validateFilename.trim()}.</strong>
-            <span>
-              Si continúas, esta versión sustituirá al guion oficial actual.
-            </span>
-          </div>
-        {:else if validateExists === false}
-          <div class="validate-result validate-result-new">
-            <strong>{validateFilename.trim()} es un guion nuevo.</strong>
-            <span>
-              Se publicará como nuevo guion oficial.
-            </span>
-          </div>
-        {:else}
-          <div class="validate-result validate-result-pending">
-            Comprueba el nombre antes de continuar.
-          </div>
-        {/if}
-
-        <div class="validate-dialog-note">
-          Esta prueba todavía no modifica ningún repositorio.
-        </div>
-
-        <div class="validate-dialog-actions">
-          <button
-            type="button"
-            class="header-button"
-            onclick={closeValidateDialog}
-          >Cancelar</button>
-
-          {#if validateExists === true && !validateChecking}
-            <button
-              type="button"
-              class="header-button danger"
-              disabled
-              title="Se conectará al Worker en el siguiente paso"
-            >Sobrescribir</button>
-          {:else if validateExists === false && !validateChecking}
-            <button
-              type="button"
-              class="header-button validate-official-button"
-              disabled
-              title="Se conectará al Worker en el siguiente paso"
-            >✓ Validar</button>
-          {/if}
-        </div>
-      </div>
-    </div>
-  {/if}
 
   <main
     class="workspace"
