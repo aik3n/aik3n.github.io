@@ -2,7 +2,7 @@ import type { Node } from '@xyflow/svelte';
 
 export type VisualNodeKind = 'options' | 'conditions';
 
-export type InspectorSection = 'name' | 'dialogue' | 'conditions' | 'options';
+export type InspectorSection = 'name' | 'dialogue' | 'jump' | 'conditions' | 'options';
 
 export type NodeEditIntent = {
   section: InspectorSection;
@@ -43,6 +43,11 @@ export type DialogueCondition = {
 export type DialogueNodeData = {
   title: string;
   text: string;
+  // 063: inventario al entrar
+  effects?: DialogueInventoryEffect[];
+  // 064: salto directo
+  jumpTargetId?: string;
+  jumpTargetLabel?: string;
   conditions: DialogueCondition[];
   options: DialogueOption[];
   initial?: boolean;

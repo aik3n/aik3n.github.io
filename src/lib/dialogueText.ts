@@ -32,6 +32,7 @@ export type BodyToken =
   | { kind: 'text'; raw: string; content: string; inlineComment?: string }
   | { kind: 'option'; optionId: string }
   | { kind: 'condition'; conditionId: string }
+  | { kind: 'jump'; raw: string; originalTargetLabel: string; tail: string }
   | { kind: 'raw'; raw: string };
 
 export type ParsedNode = {
@@ -41,6 +42,12 @@ export type ParsedNode = {
   rawHeader: string;
   headerTail: string;
   originalText: string;
+  // 063: inventario al entrar
+  effects: ParsedInventoryEffect[];
+  originalEffects: ParsedInventoryEffect[];
+  // 064: salto directo
+  jumpTargetLabel?: string;
+  originalJumpTargetLabel?: string;
   options: ParsedOption[];
   conditions: ParsedCondition[];
   tokens: BodyToken[];
@@ -75,6 +82,8 @@ export type SerializableNode = {
   id: string;
   title: string;
   text: string;
+  effects: SerializableInventoryEffect[];
+  jumpTargetLabel?: string;
   conditions: SerializableCondition[];
   options: SerializableOption[];
 };
@@ -221,6 +230,7 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
   let nodeIndex = 0;
   let optionIndex = 0;
   let conditionIndex = 0;
+  let nodeTextEffectIndex = 0;
 
   for (const line of lines) {
     const trimmed = line.trimStart();
@@ -235,6 +245,10 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
         rawHeader: line,
         headerTail: parsedHeader.tail,
         originalText: '',
+        effects: [],
+        originalEffects: [],
+        jumpTargetLabel: undefined,
+        originalJumpTargetLabel: undefined,
         options: [],
         conditions: [],
         tokens: []
@@ -268,24 +282,84 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
       continue;
     }
 
+    // 064: sólo el último > de un nodo es semántico, igual que en el runtime.
+    // Si hubiera varios, los anteriores se conservan raw y el último manda.
+    if (trimmed.startsWith('>')) {
+      const { code, comment } = splitInlineComment(line);
+      const match = code.match(/^\s*>\s*([^\s\[]+)(.*)$/);
+
+      if (!match) {
+        current.tokens.push({ kind: 'raw', raw: line });
+        continue;
+      }
+
+      for (let index = current.tokens.length - 1; index >= 0; index -= 1) {
+        const previous = current.tokens[index];
+        if (previous.kind === 'jump') {
+          current.tokens[index] = { kind: 'raw', raw: previous.raw };
+          break;
+        }
+      }
+
+      const targetLabel = match[1];
+      current.jumpTargetLabel = targetLabel;
+      current.originalJumpTargetLabel = targetLabel;
+      current.tokens.push({
+        kind: 'jump',
+        raw: line,
+        originalTargetLabel: targetLabel,
+        tail: `${match[2] ?? ''}${comment}`
+      });
+      continue;
+    }
+
     if (
       trimmed === '' ||
       trimmed.startsWith("'") ||
-      trimmed.startsWith('>') ||
       trimmed.startsWith('@') ||
-      trimmed.startsWith('[') ||
-      line.includes('[')
+      trimmed.startsWith('[')
     ) {
       current.tokens.push({ kind: 'raw', raw: line });
       continue;
     }
 
     const { code, comment } = splitInlineComment(line);
-    const content = code.trim();
+    const codeContent = code.trim();
 
-    if (!content) {
+    if (!codeContent) {
       current.tokens.push({ kind: 'raw', raw: line });
       continue;
+    }
+
+    let content = codeContent;
+
+    // 063: el runtime permite efectos al final de una línea de diálogo:
+    // Texto del PNJ. [+objeto, -otro]
+    if (codeContent.includes('[')) {
+      const bracketIndex = codeContent.lastIndexOf('[');
+
+      if (bracketIndex < 0 || !codeContent.endsWith(']')) {
+        current.tokens.push({ kind: 'raw', raw: line });
+        continue;
+      }
+
+      const textPart = codeContent.slice(0, bracketIndex).trim();
+      const effectArea = codeContent.slice(bracketIndex);
+      const parsedEffects = parseEffectBlock(
+        effectArea,
+        `loaded-node-text-${nodeTextEffectIndex + 1}`
+      );
+
+      // Si no reconocemos el bloque entero, lo dejamos raw para no reinterpretar
+      // una sintaxis dudosa.
+      if (!textPart || parsedEffects.effects.length === 0) {
+        current.tokens.push({ kind: 'raw', raw: line });
+        continue;
+      }
+
+      nodeTextEffectIndex += 1;
+      current.effects.push(...parsedEffects.effects);
+      content = textPart;
     }
 
     current.tokens.push({
@@ -301,6 +375,7 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
       .filter((token): token is Extract<BodyToken, { kind: 'text' }> => token.kind === 'text')
       .map((token) => token.content)
       .join('\n');
+    node.originalEffects = cloneEffects(node.effects);
   }
 
   return { filename, preamble, nodes, newline };
@@ -355,11 +430,31 @@ function serializeLoadedCondition(condition: SerializableCondition, parsed: Pars
   return `${items}${destination}${parsed.tail}`;
 }
 
+function serializeNodeText(
+  text: string,
+  effects: SerializableInventoryEffect[]
+): string[] {
+  if (!text) return [];
+
+  const lines = text.split('\n');
+  const suffix = serializeEffects(effects);
+
+  if (suffix && lines.length > 0) {
+    lines[lines.length - 1] = `${lines[lines.length - 1]}${suffix}`;
+  }
+
+  return lines;
+}
+
 function serializeNewNode(node: SerializableNode): string[] {
   const lines = [`# ${node.title}`];
   const groups: string[][] = [];
 
-  if (node.text) groups.push(node.text.split('\n'));
+  if (node.text) groups.push(serializeNodeText(node.text, node.effects));
+
+  if (node.jumpTargetLabel) {
+    groups.push([`> ${node.jumpTargetLabel}`]);
+  }
 
   if (node.conditions.length > 0) {
     groups.push(node.conditions.map((condition) => {
@@ -420,10 +515,13 @@ export function serializeDialogueText(
     output.push(header);
 
     const textChanged = current.text !== parsedNode.originalText;
+    const effectsChanged = !sameEffects(current.effects, parsedNode.originalEffects);
+    const textOrEffectsChanged = textChanged || effectsChanged;
     const currentOptions = new Map(current.options.map((option) => [option.id, option]));
     const currentConditions = new Map(current.conditions.map((condition) => [condition.id, condition]));
     const tokenOptionIds = new Set<string>();
     const tokenConditionIds = new Set<string>();
+    let hadJumpToken = false;
     let emittedChangedText = false;
 
     for (const token of parsedNode.tokens) {
@@ -433,13 +531,15 @@ export function serializeDialogueText(
       }
 
       if (token.kind === 'text') {
-        if (!textChanged) {
+        if (!textOrEffectsChanged) {
           output.push(token.raw);
           continue;
         }
 
         if (!emittedChangedText) {
-          if (current.text) output.push(...current.text.split('\n'));
+          if (current.text) {
+            output.push(...serializeNodeText(current.text, current.effects));
+          }
 
           const preservedComments = parsedNode.tokens
             .filter((item): item is Extract<BodyToken, { kind: 'text' }> => item.kind === 'text' && Boolean(item.inlineComment))
@@ -447,6 +547,19 @@ export function serializeDialogueText(
 
           output.push(...preservedComments);
           emittedChangedText = true;
+        }
+        continue;
+      }
+
+      if (token.kind === 'jump') {
+        hadJumpToken = true;
+        const currentTarget = current.jumpTargetLabel?.trim() ?? '';
+        if (!currentTarget) continue;
+
+        if (currentTarget === token.originalTargetLabel) {
+          output.push(token.raw);
+        } else {
+          output.push(`> ${currentTarget}${token.tail}`);
         }
         continue;
       }
@@ -471,8 +584,12 @@ export function serializeDialogueText(
       }
     }
 
-    if (textChanged && !emittedChangedText && current.text) {
-      output.push(...current.text.split('\n'));
+    if (textOrEffectsChanged && !emittedChangedText && current.text) {
+      output.push(...serializeNodeText(current.text, current.effects));
+    }
+
+    if (!hadJumpToken && current.jumpTargetLabel?.trim()) {
+      output.push(`> ${current.jumpTargetLabel.trim()}`);
     }
 
     for (const condition of current.conditions) {

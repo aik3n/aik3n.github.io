@@ -100,7 +100,6 @@
   let fileInput = $state<HTMLInputElement | null>(null);
   let parsedScript = $state.raw<ParsedScript | null>(null);
   let currentFilename = $state('guion.txt');
-  let sidebarMode = $state<'inspector' | 'txt'>('inspector');
   let statusMessage = $state('');
   let showAllConditionJumps = $state(false);
   let inspectorRequest = $state.raw<InspectorRequest | null>(null);
@@ -121,6 +120,8 @@
   // 056: pestaña lateral para TXT
   // 057: pestaña Guion fija
   let txtPanelOpen = $state(true);
+
+  // 061: limpieza de restos de UI
 
   // 048: modo admin temporal + comprobación de publicación oficial.
   // No publica nada todavía: sólo mira si el nombre ya existe.
@@ -164,6 +165,13 @@
         id: node.id,
         title: node.data.title,
         text: node.data.text,
+        // 063: inventario al entrar
+        effects: (node.data.effects ?? []).map((effect) => ({
+          operation: effect.operation,
+          item: effect.item
+        })),
+        // 064: salto directo
+        jumpTargetLabel: node.data.jumpTargetLabel,
         conditions: node.data.conditions.map((condition) => ({
           id: condition.id,
           items: condition.items,
@@ -188,23 +196,6 @@
       editableScriptText = serialized;
     }
   });
-
-  function originalValidateFilename() {
-    let filename = (currentFilename || 'guion.txt').trim();
-
-    try {
-      const source = JSON.parse(
-        sessionStorage.getItem('zenode:github-source') || 'null'
-      ) as { path?: string } | null;
-
-      const sourceName = source?.path?.split('/').filter(Boolean).pop();
-      if (sourceName) filename = sourceName;
-    } catch {
-      // Si los metadatos de origen fallan, usamos el nombre actual del editor.
-    }
-
-    return filename;
-  }
 
   async function checkValidateFilename() {
     const filename = validateFilename.trim();
@@ -268,12 +259,6 @@
     await checkValidateFilename();
   }
 
-  function editValidateFilename(value: string) {
-    validateFilename = value;
-    validateExists = null;
-    validateError = '';
-  }
-
   function closeValidateDialog() {
     validateOpen = false;
   }
@@ -294,7 +279,8 @@
 
   function selectedEdgeIsEditable() {
     return selectedEdge?.data?.role === 'option'
-      || selectedEdge?.data?.role === 'condition-preview';
+      || selectedEdge?.data?.role === 'condition-preview'
+      || selectedEdge?.data?.role === 'direct-jump';
   }
 
   function resolveTargetId(label?: string) {
@@ -394,8 +380,7 @@
       setSelectedNodeId(sourceId);
       selectedEdgeId = '';
       setConnectionHighlights(sourceId, condition.targetId);
-      sidebarMode = 'inspector';
-      statusMessage = `Condición ?${condition.order} → ${condition.targetLabel}`;
+        statusMessage = `Condición ?${condition.order} → ${condition.targetLabel}`;
       return;
     }
 
@@ -416,7 +401,6 @@
     setSelectedNodeId(sourceId);
     selectedEdgeId = '';
     setConnectionHighlights(sourceId, condition.targetId);
-    sidebarMode = 'inspector';
     statusMessage = `Condición ?${condition.order} → ${condition.targetLabel}`;
   }
 
@@ -424,7 +408,6 @@
     clearConditionPreview();
     setSelectedNodeId(nodeId);
     selectedEdgeId = '';
-    sidebarMode = 'inspector';
     inspectorRequestToken += 1;
     inspectorRequest = {
       nodeId,
@@ -437,7 +420,6 @@
     clearConditionPreview();
     setSelectedNodeId(node.id);
     selectedEdgeId = '';
-    sidebarMode = 'inspector';
   };
 
   function selectEdge({ edge }: { edge: Edge; event: MouseEvent }) {
@@ -450,7 +432,6 @@
     selectedEdgeId = edge.id;
     setSelectedNodeId(edge.source);
     setConnectionHighlights(edge.source, edge.target);
-    sidebarMode = 'inspector';
   }
 
   function updateSelected(field: 'title' | 'text', value: string) {
@@ -465,6 +446,10 @@
           ? { ...condition, targetLabel: value }
           : condition
       );
+      const jumpTargetLabel =
+        field === 'title' && node.data.jumpTargetId === selectedId
+          ? value
+          : node.data.jumpTargetLabel;
 
       return refreshNodeType({
         ...node,
@@ -472,7 +457,8 @@
           ...node.data,
           ...(node.id === selectedId ? { [field]: value } : {}),
           options,
-          conditions
+          conditions,
+          jumpTargetLabel
         }
       });
     });
@@ -490,6 +476,9 @@
       data: {
         title: isConditions ? `CONDICION_${nextNodeNumber}` : `NODO_${nextNodeNumber}`,
         text: isConditions ? '' : 'Texto del PNJ.',
+        effects: [],
+        jumpTargetId: undefined,
+        jumpTargetLabel: undefined,
         conditions: isConditions
           ? [{
               id: `cond-${nextConditionNumber}`,
@@ -506,7 +495,6 @@
     nodes = [...nodes, newNode];
     setSelectedNodeId(id);
     selectedEdgeId = '';
-    sidebarMode = 'inspector';
     nextNodeNumber += 1;
     if (isConditions) nextConditionNumber += 1;
     statusMessage = isConditions
@@ -537,6 +525,121 @@
     const x = Math.max(20, event.clientX - rect.left - 125);
     const y = Math.max(20, event.clientY - rect.top - 45);
     createNodeAt(x, y, kind);
+  }
+
+  // 063: inventario al entrar en el nodo
+  function addNodeEffect(): string | undefined {
+    if (!selectedNode) return undefined;
+
+    if (!selectedNode.data.text.trim()) {
+      statusMessage = 'Añade texto de diálogo antes de crear un efecto al entrar.';
+      return undefined;
+    }
+
+    const effectId = `effect-${nextEffectNumber}`;
+
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            effects: [
+              ...(node.data.effects ?? []),
+              { id: effectId, operation: 'add', item: 'objeto' }
+            ]
+          }
+        }
+    );
+
+    nextEffectNumber += 1;
+    return effectId;
+  }
+
+  function updateNodeEffect(
+    effectId: string,
+    field: 'operation' | 'item',
+    value: string
+  ) {
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            effects: (node.data.effects ?? []).map((effect) =>
+              effect.id !== effectId
+                ? effect
+                : field === 'operation'
+                  ? { ...effect, operation: value as InventoryEffectOperation }
+                  : { ...effect, item: value.replace(/^\s*[+-]/, '').trim() }
+            )
+          }
+        }
+    );
+  }
+
+  function removeNodeEffect(effectId: string) {
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            effects: (node.data.effects ?? []).filter(
+              (effect) => effect.id !== effectId
+            )
+          }
+        }
+    );
+  }
+
+  // 064: salto directo > DESTINO
+  function updateJumpTarget(value: string) {
+    if (!selectedNode) return;
+
+    const jumpTargetLabel = value.trim();
+    const jumpTargetId =
+      jumpTargetLabel.toLowerCase() === 'random'
+        ? undefined
+        : resolveTargetId(jumpTargetLabel);
+
+    nodes = nodes.map((node) => node.id !== selectedId
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            jumpTargetLabel: jumpTargetLabel || undefined,
+            jumpTargetId
+          }
+        }
+    );
+
+    edges = routeEdges(
+      edges.filter((edge) =>
+        !(edge.data?.role === 'direct-jump' && edge.source === selectedId)
+      ),
+      nodes
+    );
+
+    if (jumpTargetId) {
+      edges = routeEdges([
+        ...edges,
+        {
+          id: `direct-jump-${selectedId}-${jumpTargetId}`,
+          source: selectedId,
+          sourceHandle: 'direct-jump',
+          target: jumpTargetId,
+          type: 'default',
+          data: { role: 'direct-jump', lane: 0 }
+        }
+      ], nodes);
+    }
+
+    selectedEdgeId = '';
+    setConnectionHighlights();
+    if (showAllConditionJumps) refreshConditionPreviews();
   }
 
   function addOption(): string | undefined {
@@ -814,6 +917,10 @@
     return nodes.some((node) => node.data.conditions.some((condition) => condition.targetId === nodeId));
   }
 
+  function jumpReferencesTarget(nodeId: string) {
+    return nodes.some((node) => node.data.jumpTargetId === nodeId);
+  }
+
   function deleteSelectedNode() {
     const node = selectedNode;
     if (!node) return;
@@ -824,6 +931,10 @@
     }
     if (conditionReferencesTarget(node.id)) {
       statusMessage = `No se puede borrar ${node.data.title}: una condición salta a este nodo.`;
+      return;
+    }
+    if (jumpReferencesTarget(node.id)) {
+      statusMessage = `No se puede borrar ${node.data.title}: un salto directo apunta a este nodo.`;
       return;
     }
     if (rawReferenceToLoadedNode(node.id)) {
@@ -887,6 +998,26 @@
       return;
     }
 
+    if (edge.data?.role === 'direct-jump') {
+      edges = routeEdges(edges.filter((item) => item.id !== edge.id), nodes);
+      nodes = nodes.map((node) => node.id !== edge.source
+        ? node
+        : {
+            ...node,
+            data: {
+              ...node.data,
+              jumpTargetId: undefined,
+              jumpTargetLabel: undefined
+            }
+          }
+      );
+
+      selectedEdgeId = '';
+      setConnectionHighlights();
+      statusMessage = `Salto directo borrado: ${sourceNode?.data.title ?? 'nodo'} → ${targetNode?.data.title ?? 'destino'}`;
+      return;
+    }
+
     if (edge.data?.role !== 'option') return;
 
     const option = sourceNode?.data.options.find((item) => item.id === edge.sourceHandle);
@@ -939,10 +1070,40 @@
 
     const option = sourceNode.data.options.find((item) => item.id === handleId);
     const condition = sourceNode.data.conditions.find((item) => item.id === handleId);
-    if (!option && !condition) return;
+    const directJump = handleId === 'direct-jump';
+    if (!option && !condition && !directJump) return;
 
     clearConditionPreview();
     edges = edges.filter((edge) => !(edge.source === source && edge.sourceHandle === handleId));
+
+    if (directJump) {
+      nodes = nodes.map((node) => node.id !== source
+        ? node
+        : {
+            ...node,
+            data: {
+              ...node.data,
+              jumpTargetId: target,
+              jumpTargetLabel: targetNode.data.title
+            }
+          }
+      );
+
+      const jumpEdge: Edge = {
+        id: `direct-jump-${source}-${target}`,
+        source,
+        sourceHandle: 'direct-jump',
+        target,
+        type: 'default',
+        data: { role: 'direct-jump', lane: 0 }
+      };
+      edges = routeEdges([...edges, jumpEdge], nodes);
+      selectedEdgeId = jumpEdge.id;
+      setSelectedNodeId(source);
+      setConnectionHighlights(source, target);
+      statusMessage = `Salto directo → ${targetNode.data.title}`;
+      return;
+    }
 
     if (condition) {
       nodes = nodes.map((node) => node.id !== source
@@ -965,8 +1126,7 @@
       selectedEdgeId = conditionEdge.id;
       setSelectedNodeId(source);
       setConnectionHighlights(source, target);
-      sidebarMode = 'inspector';
-      statusMessage = `Condición ?${condition.order} → ${targetNode.data.title}`;
+        statusMessage = `Condición ?${condition.order} → ${targetNode.data.title}`;
       return;
     }
 
@@ -998,6 +1158,16 @@
       const data = {
         title: node.title,
         text: node.originalText,
+        effects: node.effects.map((effect) => ({
+          id: effect.id,
+          operation: effect.operation,
+          item: effect.item
+        })),
+        jumpTargetId:
+          node.jumpTargetLabel && node.jumpTargetLabel.toLowerCase() !== 'random'
+            ? idByLabel.get(node.jumpTargetLabel.toLowerCase())
+            : undefined,
+        jumpTargetLabel: node.jumpTargetLabel,
         initial: index === 0,
         onConditionTargetClick: toggleConditionJump,
         onInspectorNavigate: navigateInspector,
@@ -1038,6 +1208,17 @@
     const nextEdges: Edge[] = [];
 
     for (const node of graphNodes) {
+      if (node.data.jumpTargetId) {
+        nextEdges.push({
+          id: `direct-jump-${node.id}-${node.data.jumpTargetId}`,
+          source: node.id,
+          sourceHandle: 'direct-jump',
+          target: node.data.jumpTargetId,
+          type: 'default',
+          data: { role: 'direct-jump', lane: 0 }
+        });
+      }
+
       for (const option of node.data.options) {
         if (!option.targetId) continue;
 
@@ -1147,6 +1328,7 @@
       parsed.nodes.reduce(
         (total, node) =>
           total +
+          node.effects.length +
           node.options.reduce(
             (sum, option) => sum + option.effects.length,
             0
@@ -1235,11 +1417,13 @@
     nextNodeNumber = nodes.length + 1;
     nextOptionNumber = parsed.nodes.reduce((total, node) => total + node.options.length, 0) + 1;
     nextEffectNumber = parsed.nodes.reduce(
-      (total, node) => total + node.options.reduce((sum, option) => sum + option.effects.length, 0),
+      (total, node) =>
+        total +
+        node.effects.length +
+        node.options.reduce((sum, option) => sum + option.effects.length, 0),
       0
     ) + 1;
     nextConditionNumber = parsed.nodes.reduce((total, node) => total + node.conditions.length, 0) + 1;
-    sidebarMode = 'txt';
     const conditionCount = parsed.nodes.reduce((total, node) => total + node.conditions.length, 0);
     statusMessage = `Cargado: ${file.name}${storedLayout ? ' · disposición recuperada' : ''}${conditionCount ? ` · ${conditionCount} condición${conditionCount === 1 ? '' : 'es'}` : ''}`;
     input.value = '';
@@ -1263,6 +1447,26 @@
   <header>
     <div class="brand-block">
       <strong>ZeMobida</strong>
+
+      <!-- 062: cargas junto al titulo -->
+      <button
+        type="button"
+        class="header-button"
+        onclick={() => window.dispatchEvent(
+          new Event('zenode:load-official-scripts')
+        )}
+        title="Cargar un guion del repositorio oficial"
+      >Carga oficiales</button>
+
+      <button
+        type="button"
+        class="header-button"
+        onclick={() => window.dispatchEvent(
+          new Event('zenode:load-proposal-scripts')
+        )}
+        title="Cargar un guion del repositorio de propuestas"
+      >Carga propuestas</button>
+
       <input
         class="brand-filename-input"
         bind:value={currentFilename}
@@ -1292,7 +1496,7 @@
         type="button"
         class="header-button danger"
         onclick={deleteSelectedNode}
-        disabled={!selectedNode || Boolean(selectedEdge) || selectedNode.data.initial || conditionReferencesTarget(selectedNode.id) || rawReferenceToLoadedNode(selectedNode.id)}
+        disabled={!selectedNode || Boolean(selectedEdge) || selectedNode.data.initial || conditionReferencesTarget(selectedNode.id) || jumpReferencesTarget(selectedNode.id) || rawReferenceToLoadedNode(selectedNode.id)}
       >Borrar nodo</button>
       <button
         type="button"
@@ -1302,25 +1506,6 @@
       >Borrar conexión</button>
       <button type="button" class="header-button" onclick={organizeGraph}>Ordenar</button>
       <button type="button" class="header-button" onclick={centerGraph}>Centrar</button>
-      <!-- 059: carga oficiales y propuestas -->
-      <!-- 060: eventos separados para GitHub -->
-      <button
-        type="button"
-        class="header-button"
-        onclick={() => window.dispatchEvent(
-          new Event('zenode:load-official-scripts')
-        )}
-        title="Cargar un guion del repositorio oficial"
-      >Carga oficiales</button>
-
-      <button
-        type="button"
-        class="header-button"
-        onclick={() => window.dispatchEvent(
-          new Event('zenode:load-proposal-scripts')
-        )}
-        title="Cargar un guion del repositorio de propuestas"
-      >Carga propuestas</button>
       <button type="button" class="header-button" onclick={openFilePicker}>Abrir TXT</button>
       {#if isAdminSession}
         <button
@@ -1416,6 +1601,10 @@
         request={inspectorRequest}
         {availableNodeTitles}
         onUpdateNode={updateSelected}
+        onUpdateJumpTarget={updateJumpTarget}
+        onAddNodeEffect={addNodeEffect}
+        onUpdateNodeEffect={updateNodeEffect}
+        onRemoveNodeEffect={removeNodeEffect}
         onAddCondition={addCondition}
         onUpdateConditionItems={updateConditionItems}
         onUpdateConditionTarget={updateConditionTarget}

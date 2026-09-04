@@ -50,6 +50,7 @@
     data.options.length;
     data.options.reduce((total, option) => total + option.effects.length, 0);
     data.conditions.length;
+    data.jumpTargetLabel;
     queueMicrotask(() => updateNodeInternals(id));
   });
 </script>
@@ -107,6 +108,24 @@
     {/each}
   {/if}
 
+  {#if data.jumpTargetLabel}
+    <!-- 064: salto directo -->
+    <div
+      class="node-direct-jump editable-node-part"
+      onclick={(event) => navigate(event, { section: 'jump' })}
+      ondblclick={(event) => navigateFocus(event, { section: 'jump', field: 'target' })}
+    >
+      <span>&gt;</span>
+      <span>{data.jumpTargetLabel}</span>
+      <Handle
+        id="direct-jump"
+        type="source"
+        position={Position.Right}
+        class="direct-jump-handle"
+      />
+    </div>
+  {/if}
+
   {#if data.options.length > 0}
     <div class="node-options-title">{data.options.length} {data.options.length === 1 ? 'opción' : 'opciones'}</div>
 
@@ -148,6 +167,23 @@
 
 
 <style>
+  .node-direct-jump {
+    position: relative;
+    display: flex;
+    gap: 7px;
+    align-items: center;
+    padding: 7px 13px;
+    border-top: 1px solid #e1e5ec;
+    background: #f4f6f9;
+    color: #56657a;
+    font-size: 10px;
+    font-weight: 800;
+  }
+
+  .direct-jump-handle {
+    right: -6px;
+  }
+
   .option-effects-summary {
     margin: 4px 0 0 24px;
     overflow: hidden;

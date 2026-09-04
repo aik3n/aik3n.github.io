@@ -28,6 +28,7 @@
 
   $effect(() => {
     data.conditions.length;
+    data.jumpTargetLabel;
     queueMicrotask(() => updateNodeInternals(id));
   });
 </script>
@@ -55,6 +56,24 @@
     >{data.text}</div>
   {/if}
 
+  {#if data.jumpTargetLabel}
+    <!-- 064: salto directo -->
+    <div
+      class="condition-direct-jump editable-node-part"
+      onclick={(event) => navigate(event, { section: 'jump' })}
+      ondblclick={(event) => navigateFocus(event, { section: 'jump', field: 'target' })}
+    >
+      <span>&gt;</span>
+      <span>{data.jumpTargetLabel}</span>
+      <Handle
+        id="direct-jump"
+        type="source"
+        position={Position.Right}
+        class="direct-jump-handle"
+      />
+    </div>
+  {/if}
+
   {#each data.conditions as condition}
     <div
       class="condition-only-row editable-node-part"
@@ -78,3 +97,23 @@
     </div>
   {/each}
 </div>
+
+<style>
+  /* 064: salto directo */
+  .condition-direct-jump {
+    position: relative;
+    display: flex;
+    gap: 7px;
+    align-items: center;
+    padding: 7px 13px;
+    border-top: 1px solid #e1e5ec;
+    background: #f4f6f9;
+    color: #56657a;
+    font-size: 10px;
+    font-weight: 800;
+  }
+
+  .direct-jump-handle {
+    right: -6px;
+  }
+</style>
