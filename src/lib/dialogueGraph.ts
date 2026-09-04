@@ -55,6 +55,9 @@ export type DialogueNodeData = {
   editorSelected?: boolean;
   onConditionTargetClick?: (sourceId: string, conditionId: string) => void;
   onInspectorNavigate?: (nodeId: string, intent: NodeEditIntent) => void;
+  // 073: borrado contextual desde la tarjeta visual
+  canDeleteNode?: (nodeId: string) => boolean;
+  onDeleteNode?: (nodeId: string) => void;
 };
 
 export type DialogueNode = Node<DialogueNodeData, VisualNodeKind>;

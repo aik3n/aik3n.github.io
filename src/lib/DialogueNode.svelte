@@ -39,6 +39,12 @@
     data.onInspectorNavigate?.(id, { ...intent, focus: true });
   }
 
+  function deleteThisNode(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    data.onDeleteNode?.(id);
+  }
+
   function optionEffectsSummary(option: DialogueOption) {
     return option.effects
       .filter((effect) => effect.item.trim())
@@ -59,6 +65,15 @@
   class={`node-card compact-node options-node${data.initial ? ' initial-node' : ''}${data.editorSelected ? ' editor-selected' : ''}${data.connectionHighlight ? ' connection-endpoint' : ''}`}
 >
   <Handle type="target" position={Position.Top} />
+
+  <button
+    type="button"
+    class="node-card-delete nodrag nopan"
+    onclick={deleteThisNode}
+    disabled={!data.canDeleteNode?.(id)}
+    title={data.canDeleteNode?.(id) ? 'Borrar nodo' : 'Este nodo no se puede borrar'}
+    aria-label="Borrar nodo"
+  >×</button>
 
   <div
     class="node-title editable-node-part"

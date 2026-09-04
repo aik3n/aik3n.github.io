@@ -141,6 +141,12 @@
     if (effectId) focusKey(`option:${optionId}:effect:${effectId}:item`);
   }
 
+  function startNewNodeDrag(event: DragEvent) {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData('application/x-zemobida-node', 'options');
+    event.dataTransfer.effectAllowed = 'copy';
+  }
+
 </script>
 
 <div class="inspector-component" bind:this={root}>
@@ -150,13 +156,7 @@
   </div>
 
   {#if node}
-    <div class={`node-type-pill ${node.type}`}>
-      {node.type === 'conditions' ? '? Nodo de Condiciones' : '▣ Nodo de Opciones'}
-    </div>
-
-    {#if node.data.initial}
-      <div class="initial-info">▶ Nodo inicial · punto de entrada del diálogo · admite retornos</div>
-    {/if}
+    <!-- 068: un solo concepto de nodo; sin pastilla de tipo -->
 
     <details class="inspector-section" bind:open={nameOpen}>
       <summary>
@@ -165,7 +165,7 @@
       </summary>
       <div class="inspector-section-body">
         <label class="inspector-field-label">
-          Nombre del nodo
+          <!-- 084: sin texto redundante Nombre del nodo -->
           <input
             data-focus-key="name"
             value={node.data.title}
@@ -430,14 +430,75 @@
       </div>
     </details>
 
-    <div class="info-box">
-      El tipo no se guarda aparte: se deriva del guion. <b>Con opciones = Opciones.</b> Sin opciones pero con condiciones = <b>Condiciones</b>.
+    <!-- 083: eliminado panel explicativo de tipos -->
+{:else}
+    <!-- 070: estado sin selección -->
+    <div class="inspector-create-state">
+      <strong>Crear nodo</strong>
+
+      <!-- 071: nodo arrastrable desde Inspector -->
+      <div
+        class="inspector-node-drag"
+        draggable={true}
+        ondragstart={startNewNodeDrag}
+        title="Arrastra al lienzo para crear un nodo"
+      >
+        <span>▣ Nuevo nodo</span>
+        <small>Arrastra al lienzo</small>
+      </div>
     </div>
   {/if}
 </div>
 
 
 <style>
+  .inspector-create-state {
+    display: grid;
+    gap: 7px;
+    padding: 16px 14px;
+    border: 1px dashed #cbd2df;
+    border-radius: 9px;
+    background: #f8fafc;
+    color: #697386;
+  }
+
+  .inspector-create-state strong {
+    color: #26344a;
+    font-size: 14px;
+  }
+
+  .inspector-create-state > span {
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .inspector-node-drag {
+    display: grid;
+    gap: 3px;
+    margin-top: 4px;
+    padding: 12px 13px;
+    border: 1px solid #b9c8dd;
+    border-radius: 8px;
+    background: #eef4fb;
+    color: #35577e;
+    cursor: grab;
+    user-select: none;
+  }
+
+  .inspector-node-drag:active {
+    cursor: grabbing;
+  }
+
+  .inspector-node-drag span {
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .inspector-node-drag small {
+    color: #6d7d91;
+    font-size: 10px;
+  }
+
   .option-destination-editor {
     margin-top: 8px;
   }

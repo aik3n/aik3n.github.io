@@ -56,6 +56,8 @@
         conditions: [],
         onConditionTargetClick: toggleConditionJump,
         onInspectorNavigate: navigateInspector,
+        canDeleteNode: canDeleteNodeFromCard,
+        onDeleteNode: deleteNodeFromCard,
         options: [
           {
             id: 'opt-inicio-1',
@@ -77,6 +79,8 @@
         conditions: [],
         onConditionTargetClick: toggleConditionJump,
         onInspectorNavigate: navigateInspector,
+        canDeleteNode: canDeleteNodeFromCard,
+        onDeleteNode: deleteNodeFromCard,
         options: []
       }
     }
@@ -104,7 +108,7 @@
   let parsedScript = $state.raw<ParsedScript | null>(null);
   let currentFilename = $state('guion.txt');
   let statusMessage = $state('');
-  let showAllConditionJumps = $state(false);
+  // 069: conexiones de condición siempre visibles
   let inspectorRequest = $state.raw<InspectorRequest | null>(null);
   let inspectorRequestToken = $state(0);
   let centerRequestToken = $state(0);
@@ -122,7 +126,78 @@
   // 055: Inspector fijo · TXT colapsable
   // 056: pestaña lateral para TXT
   // 057: pestaña Guion fija
-  let txtPanelOpen = $state(true);
+  let txtPanelOpen = $state(false);
+  let txtPanelWidth = $state<number | null>(null);
+
+  function startTxtPanelResize(event: PointerEvent) {
+    if (!txtPanelOpen) return;
+
+    const handle = event.currentTarget as HTMLElement;
+    const workspace = handle.closest('.workspace') as HTMLElement | null;
+    if (!workspace) return;
+
+    event.preventDefault();
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const resize = (clientX: number) => {
+      const rect = workspace.getBoundingClientRect();
+      const inspector = workspace.querySelector(
+        '.inspector-panel'
+      ) as HTMLElement | null;
+
+      const inspectorWidth =
+        inspector?.getBoundingClientRect().width ?? 330;
+
+      const minPanelWidth = 260;
+      const minGraphWidth = 280;
+      const maxPanelWidth = Math.max(
+        minPanelWidth,
+        Math.min(
+          760,
+          rect.width - inspectorWidth - minGraphWidth
+        )
+      );
+
+      const desiredWidth = rect.right - clientX;
+
+      txtPanelWidth = Math.round(
+        Math.max(
+          minPanelWidth,
+          Math.min(maxPanelWidth, desiredWidth)
+        )
+      );
+    };
+
+    const move = (moveEvent: PointerEvent) => {
+      resize(moveEvent.clientX);
+    };
+
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  }
+
+  // 070: estado en lienzo + Guion plegado + deselección en vacío
+  // 071: crear nodo desde Inspector
+  // 072: borrar nodo desde Inspector (corregido por 073)
+  // 073: borrar nodo desde la tarjeta del grafo
+  // 074: borrar conexión desde el lienzo
+  // 075: acciones del grafo dentro del lienzo
+  // 078: ancho ajustable de Guion
+  // 079: abrir/guardar local antes de enviar
+  // 080: separar acciones locales del envío
+  // 081b: acciones locales centradas y envío a la derecha
 
   // 061: limpieza de restos de UI
 
@@ -142,10 +217,16 @@
     selectedId = nodeId;
     nodes = nodes.map((node) => {
       const shouldBeSelected = Boolean(nodeId) && node.id === nodeId;
-      if (Boolean(node.data.editorSelected) === shouldBeSelected) return node;
+      const editorSelectionMatches =
+        Boolean(node.data.editorSelected) === shouldBeSelected;
+      const flowSelectionMatches =
+        Boolean(node.selected) === shouldBeSelected;
+
+      if (editorSelectionMatches && flowSelectionMatches) return node;
 
       return {
         ...node,
+        selected: shouldBeSelected,
         data: {
           ...node.data,
           editorSelected: shouldBeSelected ? true : undefined
@@ -256,51 +337,39 @@
   }
 
   function refreshConditionPreviews() {
-    const optionEdges = edges.filter((edge) => edge.data?.role !== 'condition-preview');
+    const nonConditionEdges = edges.filter(
+      (edge) => edge.data?.role !== 'condition-preview'
+    );
 
-    if (!showAllConditionJumps) {
-      edges = optionEdges;
-      return;
-    }
-
-    const previews: Edge[] = [];
+    const conditionEdges: Edge[] = [];
     for (const node of nodes) {
       for (const condition of node.data.conditions) {
         if (!condition.targetId) continue;
-        previews.push(conditionPreviewEdge(node.id, condition.id, condition.targetId));
+        conditionEdges.push(
+          conditionPreviewEdge(node.id, condition.id, condition.targetId)
+        );
       }
     }
 
-    edges = routeEdges([...optionEdges, ...previews], nodes);
+    edges = routeEdges([...nonConditionEdges, ...conditionEdges], nodes);
   }
 
   function clearConditionPreview() {
-    if (!showAllConditionJumps) {
-      edges = edges.filter((edge) => edge.data?.role !== 'condition-preview');
-    }
     setConnectionHighlights();
   }
 
-  function toggleAllConditionJumps() {
-    showAllConditionJumps = !showAllConditionJumps;
-    refreshConditionPreviews();
+  function clearCanvasSelection() {
+    clearConditionPreview();
+    setSelectedNodeId('');
     selectedEdgeId = '';
-    setConnectionHighlights();
-
-    if (showAllConditionJumps) {
-      const visibleCount = edges.filter((edge) => edge.data?.role === 'condition-preview').length;
-      statusMessage = visibleCount
-        ? `Mostrando ${visibleCount} conexión${visibleCount === 1 ? '' : 'es'} de condición`
-        : 'No hay condiciones con destino válido.';
-    } else {
-      statusMessage = 'Conexiones de condiciones ocultas';
-    }
+    inspectorRequest = null;
   }
 
   function toggleConditionJump(sourceId: string, conditionId: string) {
-    const previewId = `condition-preview-${sourceId}-${conditionId}`;
     const sourceNode = nodes.find((node) => node.id === sourceId);
-    const condition = sourceNode?.data.conditions.find((item) => item.id === conditionId);
+    const condition = sourceNode?.data.conditions.find(
+      (item) => item.id === conditionId
+    );
 
     if (!sourceNode || !condition?.targetId) {
       setConnectionHighlights();
@@ -309,28 +378,6 @@
         : 'Esta condición todavía no tiene destino.';
       return;
     }
-
-    if (showAllConditionJumps) {
-      setSelectedNodeId(sourceId);
-      selectedEdgeId = '';
-      setConnectionHighlights(sourceId, condition.targetId);
-        statusMessage = `Condición ?${condition.order} → ${condition.targetLabel}`;
-      return;
-    }
-
-    const wasVisible = edges.some((edge) => edge.id === previewId);
-    edges = edges.filter((edge) => edge.data?.role !== 'condition-preview');
-
-    if (wasVisible) {
-      setConnectionHighlights();
-      statusMessage = '';
-      return;
-    }
-
-    edges = routeEdges([
-      ...edges,
-      conditionPreviewEdge(sourceId, conditionId, condition.targetId)
-    ], nodes);
 
     setSelectedNodeId(sourceId);
     selectedEdgeId = '';
@@ -356,13 +403,23 @@
     selectedEdgeId = '';
   };
 
-  function selectEdge({ edge }: { edge: Edge; event: MouseEvent }) {
-    // Las conexiones de condición pueden ser temporales cuando el modo global
-    // está oculto. Si pulsamos una, no debemos borrarla antes de seleccionarla.
-    if (edge.data?.role !== 'condition-preview') {
-      clearConditionPreview();
-    }
+  // 087: seleccionar nodo al empezar a arrastrarlo
+  // 088: evento correcto de Svelte Flow para drag start
+  // 089: sincronizar selección del editor con Svelte Flow
+  function selectNodeOnDragStart({
+    targetNode
+  }: {
+    targetNode: DialogueNode | null;
+  }) {
+    if (!targetNode) return;
 
+    clearConditionPreview();
+    setSelectedNodeId(targetNode.id);
+    selectedEdgeId = '';
+  }
+
+  function selectEdge({ edge }: { edge: Edge; event: MouseEvent }) {
+    clearConditionPreview();
     selectedEdgeId = edge.id;
     setSelectedNodeId(edge.source);
     setConnectionHighlights(edge.source, edge.target);
@@ -422,6 +479,8 @@
           : [],
         onConditionTargetClick: toggleConditionJump,
         onInspectorNavigate: navigateInspector,
+        canDeleteNode: canDeleteNodeFromCard,
+        onDeleteNode: deleteNodeFromCard,
         options: []
       }
     };
@@ -432,15 +491,9 @@
     nextNodeNumber += 1;
     if (isConditions) nextConditionNumber += 1;
     statusMessage = isConditions
-      ? 'Nodo de condiciones creado. Completa condición y destino en el inspector.'
-      : 'Nodo de opciones creado.';
+      ? 'Nodo creado con condición. Completa condición y destino en el inspector.'
+      : 'Nodo creado.';
     saveCurrentLayout();
-  }
-
-  function startPaletteDrag(event: DragEvent, kind: VisualNodeKind) {
-    if (!event.dataTransfer) return;
-    event.dataTransfer.setData('application/x-zemobida-node', kind);
-    event.dataTransfer.effectAllowed = 'copy';
   }
 
   function allowCanvasDrop(event: DragEvent) {
@@ -573,7 +626,7 @@
 
     selectedEdgeId = '';
     setConnectionHighlights();
-    if (showAllConditionJumps) refreshConditionPreviews();
+    refreshConditionPreviews();
   }
 
   function addOption(): string | undefined {
@@ -648,7 +701,7 @@
 
     selectedEdgeId = '';
     setConnectionHighlights();
-    if (showAllConditionJumps) refreshConditionPreviews();
+    refreshConditionPreviews();
   }
 
   function addOptionEffect(optionId: string): string | undefined {
@@ -812,8 +865,7 @@
           }
         }
     );
-    if (showAllConditionJumps) refreshConditionPreviews();
-    else clearConditionPreview();
+    refreshConditionPreviews();
   }
 
   function removeCondition(conditionId: string) {
@@ -826,8 +878,7 @@
         .map((condition, index) => ({ ...condition, order: index + 1 }));
       return { ...node, data: { ...node.data, conditions } };
     }));
-    if (showAllConditionJumps) refreshConditionPreviews();
-    else clearConditionPreview();
+    refreshConditionPreviews();
     saveCurrentLayout();
   }
 
@@ -855,8 +906,19 @@
     return nodes.some((node) => node.data.jumpTargetId === nodeId);
   }
 
-  function deleteSelectedNode() {
-    const node = selectedNode;
+  function canDeleteNodeFromCard(nodeId: string) {
+    const node = nodes.find((item) => item.id === nodeId);
+    return Boolean(
+      node
+      && !node.data.initial
+      && !conditionReferencesTarget(nodeId)
+      && !jumpReferencesTarget(nodeId)
+      && !rawReferenceToLoadedNode(nodeId)
+    );
+  }
+
+  function deleteNodeFromCard(nodeId: string) {
+    const node = nodes.find((item) => item.id === nodeId);
     if (!node) return;
 
     if (node.data.initial) {
@@ -892,7 +954,10 @@
       }))
     );
 
-    edges = routeEdges(edges.filter((edge) => edge.source !== deletedId && edge.target !== deletedId), nodes);
+    edges = routeEdges(
+      edges.filter((edge) => edge.source !== deletedId && edge.target !== deletedId),
+      nodes
+    );
     setSelectedNodeId(nodes[0]?.id ?? '');
     selectedEdgeId = '';
     statusMessage = `Nodo borrado: ${node.data.title}`;
@@ -927,7 +992,7 @@
 
       selectedEdgeId = '';
       setConnectionHighlights();
-      if (showAllConditionJumps) refreshConditionPreviews();
+      refreshConditionPreviews();
       statusMessage = `Conexión borrada: ?${condition?.order ?? ''} → ${targetNode?.data.title ?? 'destino'}`;
       return;
     }
@@ -1105,6 +1170,8 @@
         initial: index === 0,
         onConditionTargetClick: toggleConditionJump,
         onInspectorNavigate: navigateInspector,
+        canDeleteNode: canDeleteNodeFromCard,
+        onDeleteNode: deleteNodeFromCard,
         conditions: node.conditions.map((condition, conditionIndex) => ({
           id: condition.id,
           order: conditionIndex + 1,
@@ -1165,8 +1232,6 @@
           data: { role: 'option', lane: 0 }
         });
       }
-
-      if (!showAllConditionJumps) continue;
 
       for (const condition of node.data.conditions) {
         if (!condition.targetId) continue;
@@ -1327,7 +1392,6 @@
 
     const loadedNodes = buildDialogueNodesFromParsed(parsed);
 
-    showAllConditionJumps = false;
     const storedLayout = loadStoredLayout(file.name);
     nodes = applyStoredPositions(layoutDialogueNodes(loadedNodes), storedLayout);
     edges = buildVisibleEdges(nodes);
@@ -1483,37 +1547,29 @@
       />
     </div>
 
-    <div class="header-actions">
-      {#if statusMessage}<span class="status-message">{statusMessage}</span>{/if}
+    <div class="header-local-actions">
+      <button
+        type="button"
+        class="header-button"
+        onclick={openFilePicker}
+      >Abrir guion local</button>
 
       <button
         type="button"
-        class="header-button node-drag-tool"
-        draggable={true}
-        ondragstart={(event) => startPaletteDrag(event, 'options')}
-        title="Arrastra al lienzo para crear un nodo"
-      >▣ Nodo</button>
+        class="header-button"
+        onclick={saveScript}
+      >Guardar guion local</button>
 
-      <button
-        type="button"
-        class={showAllConditionJumps ? 'header-button condition-toggle-active' : 'header-button'}
-        onclick={toggleAllConditionJumps}
-      >{showAllConditionJumps ? 'Ocultar conexiones ?' : 'Mostrar conexiones ?'}</button>
-      <button
-        type="button"
-        class="header-button danger"
-        onclick={deleteSelectedNode}
-        disabled={!selectedNode || Boolean(selectedEdge) || selectedNode.data.initial || conditionReferencesTarget(selectedNode.id) || jumpReferencesTarget(selectedNode.id) || rawReferenceToLoadedNode(selectedNode.id)}
-      >Borrar nodo</button>
-      <button
-        type="button"
-        class="header-button danger"
-        onclick={deleteSelectedConnection}
-        disabled={!selectedEdge || !selectedEdgeIsEditable()}
-      >Borrar conexión</button>
-      <button type="button" class="header-button" onclick={organizeGraph}>Ordenar</button>
-      <button type="button" class="header-button" onclick={centerGraph}>Centrar</button>
-      <button type="button" class="header-button" onclick={openFilePicker}>Abrir TXT</button>
+      <input
+        class="hidden-file-input"
+        bind:this={fileInput}
+        type="file"
+        accept=".txt,text/plain"
+        onchange={loadScriptFile}
+      />
+    </div>
+
+    <div class="header-publish-actions">
       {#if isAdminSession}
         <button
           type="button"
@@ -1531,20 +1587,15 @@
           title="Enviar este guion como propuesta"
         >{publishBusy ? 'Enviando…' : 'Enviar propuesta'}</button>
       {/if}
-      <button type="button" class="header-button" onclick={saveScript}>Guardar TXT</button>
-      <input
-        class="hidden-file-input"
-        bind:this={fileInput}
-        type="file"
-        accept=".txt,text/plain"
-        onchange={loadScriptFile}
-      />
     </div>
   </header>
 
   <main
     class="workspace"
     class:txt-closed={!txtPanelOpen}
+    style={txtPanelWidth === null
+      ? undefined
+      : `--txt-panel-width: ${txtPanelWidth}px;`}
   >
     <aside class="inspector-panel">
       <InspectorView
@@ -1576,14 +1627,47 @@
       ondragover={allowCanvasDrop}
       ondrop={dropNodeOnCanvas}
     >
+      <div class="canvas-tools">
+        <button
+          type="button"
+          class="canvas-tool-button"
+          onclick={centerGraph}
+          title="Centrar el grafo"
+        >CENTRAR</button>
+
+        <button
+          type="button"
+          class="canvas-tool-button"
+          onclick={organizeGraph}
+          title="Ordenar automáticamente el grafo"
+        >ORDENAR</button>
+
+        {#if selectedEdge && selectedEdgeIsEditable()}
+          <button
+            type="button"
+            class="canvas-tool-button danger"
+            onclick={deleteSelectedConnection}
+            title="Borrar conexión seleccionada"
+          >BORRAR</button>
+        {/if}
+      </div>
+
+      <!-- 085: aviso de nodo inicial en el editor -->
+      {#if selectedNode?.data.initial}
+        <div class="canvas-initial-info">
+          ▶ Nodo inicial · punto de entrada del diálogo · admite retornos
+        </div>
+      {/if}
+
       <SvelteFlow
         bind:nodes
         bind:edges
         {nodeTypes}
         onnodeclick={selectNode}
+        onnodedragstart={selectNodeOnDragStart}
         onnodedragstop={rememberNodePositions}
         onedgeclick={selectEdge}
-        onpaneclick={clearConditionPreview}
+        onpaneclick={clearCanvasSelection}
         onmoveend={rememberViewport}
         onconnect={connectOption}
         fitView
@@ -1601,7 +1685,21 @@
         <Background gap={20} size={1} />
         <Controls />
       </SvelteFlow>
+
+      {#if statusMessage}
+        <div class="canvas-status" role="status">{statusMessage}</div>
+      {/if}
     </section>
+
+    {#if txtPanelOpen}
+      <button
+        type="button"
+        class="txt-resize-handle"
+        onpointerdown={startTxtPanelResize}
+        aria-label="Cambiar ancho del panel Guion"
+        title="Arrastra para cambiar el ancho"
+      ></button>
+    {/if}
 
     <button
       type="button"
@@ -1612,7 +1710,8 @@
       title={txtPanelOpen ? 'Cerrar Guion' : 'Abrir Guion'}
     >
       <span class="txt-edge-arrow">{txtPanelOpen ? '›' : '‹'}</span>
-      <span class="txt-edge-label">Guion</span>
+      <!-- 090: pestaña EDITOR GUION -->
+      <span class="txt-edge-label">EDITOR GUION</span>
     </button>
 
     <aside
