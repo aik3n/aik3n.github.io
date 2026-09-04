@@ -58,6 +58,7 @@
         onInspectorNavigate: navigateInspector,
         canDeleteNode: canDeleteNodeFromCard,
         onDeleteNode: deleteNodeFromCard,
+        hasNodeError: nodeHasErrorById,
         options: [
           {
             id: 'opt-inicio-1',
@@ -81,6 +82,7 @@
         onInspectorNavigate: navigateInspector,
         canDeleteNode: canDeleteNodeFromCard,
         onDeleteNode: deleteNodeFromCard,
+        hasNodeError: nodeHasErrorById,
         options: []
       }
     }
@@ -111,7 +113,8 @@
   // 069: conexiones de condición siempre visibles
   let inspectorRequest = $state.raw<InspectorRequest | null>(null);
   let inspectorRequestToken = $state(0);
-  let centerRequestToken = $state(0);
+  // 091: centrar el ejemplo al entrar
+  let centerRequestToken = $state(1);
   let viewportRestoreToken = $state(0);
   let viewportToRestore = $state.raw<Viewport | null>(null);
   let currentViewport = $state.raw<Viewport>({ x: 0, y: 0, zoom: 1 });
@@ -121,6 +124,30 @@
   let textSyncMessage = $state('');
   let textHasPendingChanges = $state(false);
   let textParseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // 093: deshacer/rehacer TXT + posiciones de nodos
+  type HistoryPosition = {
+    id: string;
+    x: number;
+    y: number;
+  };
+
+  type HistorySnapshot = {
+    text: string;
+    positions: HistoryPosition[];
+  };
+
+  const HISTORY_LIMIT = 50;
+  let editHistory = $state.raw<HistorySnapshot[]>([]);
+  let editHistoryIndex = $state(-1);
+  let historyTimer: ReturnType<typeof setTimeout> | null = null;
+  let historyRestoring = $state(false);
+
+  let canUndoHistory = $derived(editHistoryIndex > 0);
+  let canRedoHistory = $derived(
+    editHistoryIndex >= 0
+      && editHistoryIndex < editHistory.length - 1
+  );
 
   // 054: Inspector izquierda · Grafo centro · TXT derecha
   // 055: Inspector fijo · TXT colapsable
@@ -213,6 +240,81 @@
   let selectedNode = $derived(nodes.find((node) => node.id === selectedId));
   let selectedEdge = $derived(edges.find((edge) => edge.id === selectedEdgeId));
 
+  // 096: detectar errores semánticos por nodo
+  function nodeHasErrorById(nodeId: string) {
+    const node = nodes.find((item) => item.id === nodeId);
+    if (!node) return false;
+
+    const title = node.data.title.trim();
+    if (!title) return true;
+
+    const normalizedTitle = title.toLowerCase();
+    if (
+      nodes.filter(
+        (item) => item.data.title.trim().toLowerCase() === normalizedTitle
+      ).length > 1
+    ) {
+      return true;
+    }
+
+    const isSpecialDestination = (label?: string) =>
+      label?.trim().toUpperCase() === 'RANDOM';
+
+    const destinationIsBroken = (
+      label?: string,
+      targetId?: string
+    ) =>
+      Boolean(label?.trim())
+      && !isSpecialDestination(label)
+      && !targetId;
+
+    if (
+      node.data.effects?.some((effect) => !effect.item.trim())
+    ) {
+      return true;
+    }
+
+    if (
+      destinationIsBroken(
+        node.data.jumpTargetLabel,
+        node.data.jumpTargetId
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      node.data.conditions.some(
+        (condition) =>
+          condition.items.length === 0
+          || condition.items.some((item) => !item.trim())
+          || !condition.targetLabel?.trim()
+          || destinationIsBroken(
+            condition.targetLabel,
+            condition.targetId
+          )
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      node.data.options.some(
+        (option) =>
+          !option.text.trim()
+          || destinationIsBroken(
+            option.targetLabel,
+            option.targetId
+          )
+          || option.effects.some((effect) => !effect.item.trim())
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
   function setSelectedNodeId(nodeId: string) {
     selectedId = nodeId;
     nodes = nodes.map((node) => {
@@ -278,6 +380,194 @@
     }
   });
 
+  function captureHistorySnapshot(): HistorySnapshot {
+    return {
+      text: editableScriptText,
+      positions: nodes.map((node) => ({
+        id: node.id,
+        x: node.position.x,
+        y: node.position.y
+      }))
+    };
+  }
+
+  function historySnapshotKey(snapshot: HistorySnapshot) {
+    return JSON.stringify(snapshot);
+  }
+
+  function resetEditHistory() {
+    if (historyTimer) {
+      clearTimeout(historyTimer);
+      historyTimer = null;
+    }
+
+    editHistory = [];
+    editHistoryIndex = -1;
+  }
+
+  function recordHistorySnapshot() {
+    if (historyRestoring || textHasPendingChanges) return;
+
+    const snapshot = captureHistorySnapshot();
+
+    if (!snapshot.text && !parsedScript) return;
+
+    const current = editHistory[editHistoryIndex];
+    if (
+      current
+      && historySnapshotKey(current) === historySnapshotKey(snapshot)
+    ) {
+      return;
+    }
+
+    let nextHistory = [
+      ...editHistory.slice(0, editHistoryIndex + 1),
+      snapshot
+    ];
+
+    if (nextHistory.length > HISTORY_LIMIT) {
+      nextHistory = nextHistory.slice(
+        nextHistory.length - HISTORY_LIMIT
+      );
+    }
+
+    editHistory = nextHistory;
+    editHistoryIndex = editHistory.length - 1;
+  }
+
+  function restoreHistorySnapshot(
+    snapshot: HistorySnapshot,
+    message: string
+  ) {
+    if (historyTimer) {
+      clearTimeout(historyTimer);
+      historyTimer = null;
+    }
+
+    if (textParseTimer) {
+      clearTimeout(textParseTimer);
+      textParseTimer = null;
+    }
+
+    historyRestoring = true;
+    editableScriptText = snapshot.text;
+    textHasPendingChanges = true;
+
+    applyEditableScriptText(snapshot.text);
+
+    if (textHasPendingChanges) {
+      historyRestoring = false;
+      statusMessage = 'No se pudo restaurar ese estado del guion.';
+      return false;
+    }
+
+    const positionById = new Map(
+      snapshot.positions.map((position) => [
+        position.id,
+        position
+      ])
+    );
+
+    nodes = nodes.map((node) => {
+      const position = positionById.get(node.id);
+      if (!position) return node;
+
+      return {
+        ...node,
+        position: {
+          x: position.x,
+          y: position.y
+        }
+      };
+    });
+
+    edges = routeEdges(edges, nodes);
+    editableScriptText = snapshot.text;
+    saveCurrentLayout();
+    statusMessage = message;
+
+    queueMicrotask(() => {
+      historyRestoring = false;
+    });
+
+    return true;
+  }
+
+  function undoHistory() {
+    if (!canUndoHistory) return;
+
+    const nextIndex = editHistoryIndex - 1;
+    const snapshot = editHistory[nextIndex];
+    if (!snapshot) return;
+
+    if (restoreHistorySnapshot(snapshot, 'Deshacer')) {
+      editHistoryIndex = nextIndex;
+    }
+  }
+
+  function redoHistory() {
+    if (!canRedoHistory) return;
+
+    const nextIndex = editHistoryIndex + 1;
+    const snapshot = editHistory[nextIndex];
+    if (!snapshot) return;
+
+    if (restoreHistorySnapshot(snapshot, 'Rehacer')) {
+      editHistoryIndex = nextIndex;
+    }
+  }
+
+  function handleHistoryShortcut(event: KeyboardEvent) {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (!modifier || event.altKey) return;
+
+    const key = event.key.toLowerCase();
+
+    if (key === 'z' && event.shiftKey) {
+      if (!canRedoHistory) return;
+      event.preventDefault();
+      redoHistory();
+      return;
+    }
+
+    if (key === 'z') {
+      if (!canUndoHistory) return;
+      event.preventDefault();
+      undoHistory();
+      return;
+    }
+
+    if (key === 'y') {
+      if (!canRedoHistory) return;
+      event.preventDefault();
+      redoHistory();
+    }
+  }
+
+  $effect(() => {
+    const text = editableScriptText;
+    const pending = textHasPendingChanges;
+    const restoring = historyRestoring;
+
+    if (historyTimer) {
+      clearTimeout(historyTimer);
+      historyTimer = null;
+    }
+
+    if (restoring || pending) return;
+    if (!text && !parsedScript) return;
+
+    if (editHistoryIndex < 0) {
+      queueMicrotask(recordHistorySnapshot);
+      return;
+    }
+
+    historyTimer = setTimeout(() => {
+      historyTimer = null;
+      recordHistorySnapshot();
+    }, 250);
+  });
+
   function saveCurrentLayout(viewport = currentViewport) {
     if (!parsedScript) return;
     saveStoredLayout(currentFilename, nodes, viewport);
@@ -290,6 +580,7 @@
 
   function rememberNodePositions() {
     saveCurrentLayout();
+    recordHistorySnapshot();
   }
 
   function selectedEdgeIsEditable() {
@@ -481,6 +772,7 @@
         onInspectorNavigate: navigateInspector,
         canDeleteNode: canDeleteNodeFromCard,
         onDeleteNode: deleteNodeFromCard,
+        hasNodeError: nodeHasErrorById,
         options: []
       }
     };
@@ -1050,6 +1342,7 @@
     setConnectionHighlights();
     statusMessage = 'Grafo ordenado';
     saveCurrentLayout();
+    recordHistorySnapshot();
   }
 
   function centerGraph() {
@@ -1172,6 +1465,7 @@
         onInspectorNavigate: navigateInspector,
         canDeleteNode: canDeleteNodeFromCard,
         onDeleteNode: deleteNodeFromCard,
+        hasNodeError: nodeHasErrorById,
         conditions: node.conditions.map((condition, conditionIndex) => ({
           id: condition.id,
           order: conditionIndex + 1,
@@ -1406,6 +1700,8 @@
     }
     selectedEdgeId = '';
     currentFilename = file.name;
+    resetEditHistory();
+    recordHistorySnapshot();
     // Al abrir un guion conservamos las posiciones guardadas, pero siempre
     // encuadramos todo el grafo para que el usuario vea el contenido completo.
     currentViewport = { x: 0, y: 0, zoom: 1 };
@@ -1513,6 +1809,8 @@
     statusMessage = `Guardado: ${currentFilename || 'guion.txt'}`;
   }
 </script>
+
+<svelte:window onkeydown={handleHistoryShortcut} />
 
 <div class="app-shell">
   <header>
@@ -1628,6 +1926,25 @@
       ondrop={dropNodeOnCanvas}
     >
       <div class="canvas-tools">
+        <!-- 093: botones visuales deshacer / rehacer -->
+        <button
+          type="button"
+          class="canvas-tool-button history-button"
+          onclick={undoHistory}
+          disabled={!canUndoHistory}
+          aria-label="Deshacer"
+          title="Deshacer (Ctrl+Z)"
+        >↶</button>
+
+        <button
+          type="button"
+          class="canvas-tool-button history-button"
+          onclick={redoHistory}
+          disabled={!canRedoHistory}
+          aria-label="Rehacer"
+          title="Rehacer (Ctrl+Y / Ctrl+Shift+Z)"
+        >↷</button>
+
         <button
           type="button"
           class="canvas-tool-button"

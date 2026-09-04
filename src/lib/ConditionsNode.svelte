@@ -39,7 +39,7 @@
   });
 </script>
 
-<div class={`condition-card condition-only-node${data.initial ? ' initial-condition-node' : ''}${data.editorSelected ? ' editor-selected' : ''}${data.connectionHighlight ? ' connection-endpoint' : ''}`}>
+<div class={`condition-card condition-only-node${data.initial ? ' initial-condition-node' : ''}${data.editorSelected ? ' editor-selected' : ''}${data.connectionHighlight ? ' connection-endpoint' : ''}${data.hasNodeError?.(id) ? ' node-error' : ''}`}>
   <Handle type="target" position={Position.Top} />
 
   <button

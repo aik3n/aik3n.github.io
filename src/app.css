@@ -1566,3 +1566,46 @@ header {
   font-size: 14px;
   font-weight: 600;
 }
+
+/* 093: botones deshacer / rehacer */
+.canvas-tool-button.history-button {
+  min-width: 34px;
+  padding: 5px 8px;
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.canvas-tool-button.history-button:disabled {
+  opacity: .35;
+  cursor: default;
+}
+
+.canvas-tool-button.history-button:disabled:hover {
+  background: rgb(255 255 255 / 94%);
+}
+
+/* 096: nodo con error · rojo suave */
+.node-card.node-error,
+.condition-card.node-error {
+  border-color: #e2aaaa;
+  background: #fff3f3;
+}
+
+.node-card.node-error .node-title,
+.node-card.node-error .node-text-compact,
+.node-card.node-error .node-no-options,
+.node-card.node-error .node-options-title,
+.node-card.node-error .node-conditions-title,
+.node-card.node-error .node-direct-jump,
+.condition-card.node-error .condition-title,
+.condition-card.node-error .condition-fallback-text,
+.condition-card.node-error .condition-direct-jump {
+  background-color: #fff3f3;
+}
+
+.node-card.node-error .node-option,
+.node-card.node-error .node-condition-row,
+.condition-card.node-error .condition-only-row {
+  background-color: #fff8f8;
+}

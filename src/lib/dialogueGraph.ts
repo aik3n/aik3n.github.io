@@ -58,6 +58,8 @@ export type DialogueNodeData = {
   // 073: borrado contextual desde la tarjeta visual
   canDeleteNode?: (nodeId: string) => boolean;
   onDeleteNode?: (nodeId: string) => void;
+  // 096: aviso visual de error semántico
+  hasNodeError?: (nodeId: string) => boolean;
 };
 
 export type DialogueNode = Node<DialogueNodeData, VisualNodeKind>;

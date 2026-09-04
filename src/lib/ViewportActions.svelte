@@ -20,8 +20,11 @@
     if (!token || token === lastRequestToken) return;
     lastRequestToken = token;
 
-    queueMicrotask(() => {
-      fitView({ padding: 0.14, duration: 280 });
+    // 092: esperar a que los nodos estén medidos antes de centrar
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        fitView({ padding: 0.14, duration: 280 });
+      });
     });
   });
 

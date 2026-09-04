@@ -62,7 +62,7 @@
 </script>
 
 <div
-  class={`node-card compact-node options-node${data.initial ? ' initial-node' : ''}${data.editorSelected ? ' editor-selected' : ''}${data.connectionHighlight ? ' connection-endpoint' : ''}`}
+  class={`node-card compact-node options-node${data.initial ? ' initial-node' : ''}${data.editorSelected ? ' editor-selected' : ''}${data.connectionHighlight ? ' connection-endpoint' : ''}${data.hasNodeError?.(id) ? ' node-error' : ''}`}
 >
   <Handle type="target" position={Position.Top} />
 
