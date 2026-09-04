@@ -311,9 +311,11 @@ textarea { resize: vertical; }
   padding-right: 12px;
 }
 
-.equals-marker {
+.option-number {
+  min-width: 18px;
   color: #46658d;
-  font-weight: 800;
+  font-weight: 850;
+  text-align: right;
 }
 
 .node-option-target {
@@ -323,8 +325,16 @@ textarea { resize: vertical; }
 }
 
 .svelte-flow__node.selected .node-card {
-  border-color: #355f9f;
-  box-shadow: 0 0 0 2px rgb(53 95 159 / 16%), 0 7px 18px rgb(31 41 55 / 13%);
+  border-color: #1f4f8a;
+  box-shadow: 0 0 0 3px rgb(31 79 138 / 24%), 0 9px 22px rgb(31 41 55 / 16%);
+}
+
+.svelte-flow__node.selected .node-title {
+  background: #1f4f8a;
+}
+
+.svelte-flow__node.selected .conditions-node .node-title {
+  background: #5a3f82;
 }
 
 .node-card.connection-endpoint {
@@ -347,6 +357,17 @@ textarea { resize: vertical; }
   height: 12px;
   border: 2px solid white;
   background: #526987;
+}
+
+
+.option-output-number {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  color: #5e6d81;
+  font-size: 10px;
+  font-weight: 850;
+  pointer-events: none;
 }
 
 .node-output-band .option-handle {
@@ -431,6 +452,16 @@ textarea { resize: vertical; }
   background: #365982;
 }
 .header-button.primary:hover { background: #416993; }
+
+.header-button.condition-toggle-active {
+  border-color: #6e86aa;
+  background: #314762;
+  color: #f0f5fb;
+}
+
+.header-button.condition-toggle-active:hover {
+  background: #3a5473;
+}
 
 .header-button.danger {
   border-color: #8f4b4b;
@@ -658,4 +689,584 @@ textarea { resize: vertical; }
   background: #f9fafc;
   color: #8a94a6;
   font-size: 10px;
+}
+
+/* Update 020: nodos visuales de condición */
+.condition-card {
+  position: relative;
+  width: 205px;
+  overflow: visible;
+  border: 1px solid #9aa8bd;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 5px 14px rgb(31 41 55 / 10%);
+}
+
+.condition-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-radius: 9px 9px 0 0;
+  background: #45546a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+
+.condition-symbol {
+  display: grid;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 16%);
+  font-size: 13px;
+}
+
+.condition-items {
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.condition-jump {
+  padding: 8px 12px 10px;
+  border-top: 1px solid #e2e6ed;
+  border-radius: 0 0 9px 9px;
+  background: #f6f8fb;
+  color: #5f6d81;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.svelte-flow__node.selected .condition-card {
+  border-color: #355f9f;
+  box-shadow: 0 0 0 2px rgb(53 95 159 / 16%), 0 7px 18px rgb(31 41 55 / 13%);
+}
+
+.condition-card.connection-endpoint {
+  border-color: #4b6f9f;
+  box-shadow:
+    0 0 0 4px rgb(74 111 159 / 24%),
+    0 0 24px rgb(74 111 159 / 30%),
+    0 7px 18px rgb(31 41 55 / 13%);
+}
+
+.condition-origin-label {
+  position: absolute;
+  left: 16%;
+  top: 5px;
+  transform: translateX(-50%);
+  color: #5e6d81;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.node-output-band .condition-origin-handle {
+  top: auto;
+  bottom: -6px;
+  transform: translateX(-50%);
+}
+
+.condition-inspector-badge {
+  margin-bottom: 16px;
+  padding: 8px 10px;
+  border: 1px solid #c5cedb;
+  border-radius: 8px;
+  background: #f2f5f9;
+  color: #4e5d72;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.condition-inspector-grid {
+  display: grid;
+  grid-template-columns: 1fr 90px;
+  gap: 10px;
+}
+
+.condition-inspector-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #dde3eb;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.condition-inspector-grid small {
+  color: #7b8497;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.condition-inspector-grid strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.condition-inspector-wide {
+  grid-column: 1 / -1;
+}
+
+/* Update 022: condiciones dentro del nodo + inspector plegable */
+.node-conditions-title {
+  padding: 5px 13px;
+  border-top: 1px solid #e1e5ec;
+  background: #f1f4f8;
+  color: #58677c;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.node-condition-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 31px;
+  padding: 7px 10px 7px 12px;
+  border-top: 1px solid #e5e8ee;
+  background: #f7f9fc;
+  font-size: 12px;
+}
+
+.condition-number {
+  min-width: 24px;
+  color: #596c88;
+  font-weight: 850;
+}
+
+.condition-text-ellipsis {
+  overflow: hidden;
+  min-width: 0;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.condition-target-inline {
+  max-width: 82px;
+  overflow: hidden;
+  color: #7b8497;
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.condition-output-number {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  color: #596c88;
+  font-size: 10px;
+  font-weight: 850;
+  pointer-events: none;
+}
+
+.node-output-band .condition-inline-handle {
+  top: auto;
+  bottom: -6px;
+  transform: translateX(-50%);
+}
+
+.inspector-section {
+  margin: 0 0 12px;
+  border: 1px solid #dce2eb;
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.inspector-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #f6f8fb;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+  list-style-position: inside;
+  user-select: none;
+}
+
+.inspector-section > summary small {
+  color: #7b8497;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.inspector-section-body {
+  padding: 12px;
+  border-top: 1px solid #e4e8ef;
+}
+
+.inspector-section-body textarea {
+  margin: 0;
+}
+
+.section-inline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #7b8497;
+  font-size: 11px;
+}
+
+.condition-editor-list {
+  display: grid;
+  gap: 8px;
+}
+
+.condition-editor-readonly {
+  padding: 9px 10px;
+  border: 1px solid #dde3eb;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.condition-editor-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.condition-editor-title strong {
+  color: #596c88;
+}
+
+.condition-editor-title span {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.section-note {
+  margin-top: 9px;
+  color: #8a94a6;
+  font-size: 10px;
+}
+
+
+/* Update 023: condiciones sin conexiones permanentes */
+.condition-target-button {
+  flex: 0 0 auto;
+  max-width: 92px;
+  overflow: hidden;
+  border: 0;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #e9eef6;
+  color: #45658f;
+  font-size: 10px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.condition-target-button:hover {
+  background: #dbe5f2;
+  color: #274e7d;
+}
+
+.condition-preview-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.svelte-flow__edge.condition-preview-edge .svelte-flow__edge-path {
+  stroke: #7d8a9e !important;
+  stroke-width: 2px !important;
+  stroke-dasharray: 8 7;
+  opacity: .9;
+}
+
+/* Update 024: dos tipos visuales derivados del mismo # NODO */
+.palette-node + .palette-node {
+  margin-top: 10px;
+}
+
+.palette-conditions {
+  border-color: #bac6d6;
+  background: #f9fbfd;
+}
+
+.palette-conditions .palette-node-icon {
+  background: #e8edf4;
+  color: #52657e;
+  font-weight: 850;
+}
+
+.node-kind-badge,
+.condition-kind-badge {
+  margin-left: auto;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 12%);
+  color: #d8e0ec;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+
+.embedded-condition-row,
+.condition-only-row {
+  position: relative;
+  padding-right: 16px;
+}
+
+.condition-side-handle {
+  right: -6px !important;
+  width: 10px;
+  height: 10px;
+  border: 2px solid white;
+  background: #77869a;
+  opacity: .9;
+  pointer-events: none;
+}
+
+.condition-only-node {
+  width: 225px;
+}
+
+.initial-condition-node {
+  border-width: 2px;
+  border-color: #55779f;
+}
+
+.condition-node-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.condition-only-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 15px 7px 11px;
+  border-top: 1px solid #e2e6ed;
+  background: #f7f9fc;
+  font-size: 12px;
+}
+
+.condition-only-row:last-child {
+  border-radius: 0 0 9px 9px;
+}
+
+.condition-fallback-text {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 8px 11px;
+  border-top: 1px solid #e2e6ed;
+  color: #657287;
+  font-size: 10px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.node-type-pill {
+  margin-bottom: 14px;
+  padding: 7px 9px;
+  border: 1px solid #cbd4e0;
+  border-radius: 8px;
+  background: #f5f7fa;
+  color: #526176;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.node-type-pill.options {
+  border-color: #b9c8dd;
+  background: #eef4fb;
+  color: #35577e;
+}
+
+.condition-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dce2eb;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.condition-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #596c88;
+}
+
+.compact-label {
+  gap: 5px;
+  margin: 0;
+  color: #6b7689;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.compact-label input {
+  padding: 8px 9px;
+  font-size: 12px;
+}
+
+.small-x {
+  width: 27px;
+  height: 27px;
+  font-size: 16px;
+}
+
+/* Update 025a: navegación contextual canvas -> inspector */
+.editable-node-part {
+  cursor: pointer;
+}
+
+.inspector-field-label {
+  margin: 0;
+}
+
+
+/* Update 027: centrar vista + destino con aspecto de combo editable */
+.editable-combobox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  border: 1px solid #cbd2df;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.editable-combobox:focus-within {
+  border-color: #5875a7;
+  box-shadow: 0 0 0 3px rgb(88 117 167 / 14%);
+}
+
+.editable-combobox input {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none !important;
+}
+
+.combobox-trigger {
+  border: 0;
+  border-left: 1px solid #d6dde8;
+  background: #f2f5f9;
+  color: #42526a;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.combobox-trigger:hover {
+  background: #e5ebf3;
+}
+\n\n/* Update 028: combo editable propio; muestra siempre todos los nodos */\n.editable-combobox-wrap {\n  position: relative;\n}\n\n.combobox-trigger.open {\n  background: #dfe7f1;\n  transform: rotate(180deg);\n}\n\n.destination-menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  max-height: 210px;
+  overflow-y: auto;
+  padding: 0;
+  border: 1px solid #bfc9d8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgb(31 41 55 / 16%);
+}
+
+.destination-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid #e5e9f0;
+  border-radius: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: #26344a;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+
+.destination-menu-item:last-child {
+  border-bottom: 0;
+}
+
+.destination-menu-item:hover {
+  background: #f3f6fa;
+}
+
+.destination-menu-item.current {
+  background: #eef3f9;
+  font-weight: 700;
+}
+
+.destination-menu-item small {
+  color: #708096;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.destination-menu-empty {
+  padding: 9px 10px;
+  color: #7b8497;
+  font-size: 11px;
+}
+\n\n\n/* Update 031: selección explícita del editor */\n.options-node.editor-selected {\n  border-color: #1769c2 !important;\n  background: #eef6ff !important;\n  box-shadow:\n    0 0 0 4px rgb(23 105 194 / 28%),\n    0 0 24px rgb(23 105 194 / 22%),\n    0 9px 22px rgb(31 41 55 / 16%) !important;\n}\n\n.options-node.editor-selected .node-title {\n  background: #1769c2 !important;\n}\n\n.options-node.editor-selected .node-text-compact,\n.options-node.editor-selected .node-conditions-title,\n.options-node.editor-selected .node-options-title {\n  background-color: #eef6ff;\n}\n\n.condition-only-node.editor-selected {\n  border-color: #7c3aed !important;\n  background: #f6f0ff !important;\n  box-shadow:\n    0 0 0 4px rgb(124 58 237 / 24%),\n    0 0 24px rgb(124 58 237 / 20%),\n    0 9px 22px rgb(31 41 55 / 16%) !important;\n}\n\n.condition-only-node.editor-selected .condition-title {\n  background: #7c3aed !important;\n}\n
+.options-node.editor-selected .node-option,
+.options-node.editor-selected .node-output-band,
+.options-node.editor-selected .node-no-options {
+  background-color: #e7f1ff;
+}
+
+.condition-only-node.editor-selected .condition-only-row,
+.condition-only-node.editor-selected .condition-fallback-text {
+  background-color: #f1e9ff;
+}
+
+/* 032: selección inequívoca por color de cabecera */
+.node-card.is-selected .node-title {
+  background: #16a34a !important;
+  color: #fff !important;
+}
+
+.node-card.conditions-node.is-selected .node-title {
+  background: #15803d !important;
+  color: #fff !important;
+}
+
+.node-card.is-selected {
+  border-color: #16a34a !important;
+  box-shadow: 0 0 0 3px rgb(22 163 74 / 28%), 0 9px 22px rgb(31 41 55 / 18%) !important;
+}
+
+.node-card.conditions-node.is-selected {
+  border-color: #15803d !important;
+  box-shadow: 0 0 0 3px rgb(21 128 61 / 28%), 0 9px 22px rgb(31 41 55 / 18%) !important;
 }

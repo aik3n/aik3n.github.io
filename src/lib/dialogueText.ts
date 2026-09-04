@@ -8,9 +8,20 @@ export type ParsedOption = {
   tail: string;
 };
 
+export type ParsedCondition = {
+  id: string;
+  items: string[];
+  targetLabel?: string;
+  originalItems: string[];
+  originalTargetLabel?: string;
+  raw: string;
+  tail: string;
+};
+
 export type BodyToken =
   | { kind: 'text'; raw: string; content: string; inlineComment?: string }
   | { kind: 'option'; optionId: string }
+  | { kind: 'condition'; conditionId: string }
   | { kind: 'raw'; raw: string };
 
 export type ParsedNode = {
@@ -21,6 +32,7 @@ export type ParsedNode = {
   headerTail: string;
   originalText: string;
   options: ParsedOption[];
+  conditions: ParsedCondition[];
   tokens: BodyToken[];
 };
 
@@ -37,18 +49,23 @@ export type SerializableOption = {
   targetLabel?: string;
 };
 
+export type SerializableCondition = {
+  id: string;
+  items: string[];
+  targetLabel?: string;
+};
+
 export type SerializableNode = {
   id: string;
   title: string;
   text: string;
+  conditions: SerializableCondition[];
   options: SerializableOption[];
 };
 
 function splitInlineComment(line: string) {
   const index = line.indexOf("'");
-  if (index < 0) {
-    return { code: line, comment: '' };
-  }
+  if (index < 0) return { code: line, comment: '' };
 
   return {
     code: line.slice(0, index),
@@ -113,6 +130,38 @@ function parseOptionLine(line: string, id: string): ParsedOption {
   };
 }
 
+function parseConditionLine(line: string, id: string): ParsedCondition | null {
+  const { code, comment } = splitInlineComment(line);
+  const jumpIndex = code.indexOf('>');
+
+  // El runtime ignora una condición sin salto. La dejamos raw para no reinterpretarla.
+  if (jumpIndex < 0) return null;
+
+  const conditionPart = code.slice(0, jumpIndex).trim();
+  const items = conditionPart
+    .split(/\s+/)
+    .filter((token) => token.startsWith('?'))
+    .map((token) => token.slice(1).trim())
+    .filter(Boolean);
+
+  const destinationPart = code.slice(jumpIndex + 1).trimStart();
+  const destinationMatch = destinationPart.match(/^([^\s\[]+)(.*)$/);
+  if (items.length === 0 || !destinationMatch) return null;
+
+  const targetLabel = destinationMatch[1];
+  const tail = `${destinationMatch[2] ?? ''}${comment}`;
+
+  return {
+    id,
+    items,
+    targetLabel,
+    originalItems: [...items],
+    originalTargetLabel: targetLabel,
+    raw: line,
+    tail
+  };
+}
+
 export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedScript {
   const newline: '\n' | '\r\n' = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.replace(/\r\n/g, '\n').split('\n');
@@ -122,6 +171,7 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
   let current: ParsedNode | null = null;
   let nodeIndex = 0;
   let optionIndex = 0;
+  let conditionIndex = 0;
 
   for (const line of lines) {
     const trimmed = line.trimStart();
@@ -137,6 +187,7 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
         headerTail: parsedHeader.tail,
         originalText: '',
         options: [],
+        conditions: [],
         tokens: []
       };
       nodes.push(current);
@@ -156,10 +207,21 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
       continue;
     }
 
+    if (trimmed.startsWith('?')) {
+      conditionIndex += 1;
+      const condition = parseConditionLine(line, `loaded-cond-${conditionIndex}`);
+      if (condition) {
+        current.conditions.push(condition);
+        current.tokens.push({ kind: 'condition', conditionId: condition.id });
+      } else {
+        current.tokens.push({ kind: 'raw', raw: line });
+      }
+      continue;
+    }
+
     if (
       trimmed === '' ||
       trimmed.startsWith("'") ||
-      trimmed.startsWith('?') ||
       trimmed.startsWith('>') ||
       trimmed.startsWith('@') ||
       trimmed.startsWith('[') ||
@@ -195,7 +257,6 @@ export function parseDialogueText(text: string, filename = 'guion.txt'): ParsedS
   return { filename, preamble, nodes, newline };
 }
 
-
 function rewriteRawDestinations(raw: string, renameByOriginal: Map<string, string>) {
   const { code, comment } = splitInlineComment(raw);
   const rewritten = code.replace(/(>\s*)([^\s\[]+)/g, (full, prefix: string, label: string) => {
@@ -210,28 +271,52 @@ function serializeLoadedOption(option: SerializableOption, parsed: ParsedOption)
   const sameText = option.text === parsed.originalText;
   const sameTarget = (option.targetLabel ?? '') === (parsed.originalTargetLabel ?? '');
 
-  if (sameText && sameTarget) {
-    return parsed.raw;
-  }
+  if (sameText && sameTarget) return parsed.raw;
 
   const destination = option.targetLabel ? ` > ${option.targetLabel}` : '';
   return `= ${option.text}${destination}${parsed.tail}`;
 }
 
+function sameItems(a: string[], b: string[]) {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
+function serializeLoadedCondition(condition: SerializableCondition, parsed: ParsedCondition) {
+  const unchangedItems = sameItems(condition.items, parsed.originalItems);
+  const unchangedTarget = (condition.targetLabel ?? '') === (parsed.originalTargetLabel ?? '');
+
+  if (unchangedItems && unchangedTarget) return parsed.raw;
+
+  const items = condition.items.filter(Boolean).map((item) => `?${item}`).join(' ');
+  const destination = condition.targetLabel ? ` > ${condition.targetLabel}` : '';
+  return `${items}${destination}${parsed.tail}`;
+}
+
 function serializeNewNode(node: SerializableNode): string[] {
   const lines = [`# ${node.title}`];
+  const groups: string[][] = [];
 
-  if (node.text) {
-    lines.push(...node.text.split('\n'));
+  if (node.text) groups.push(node.text.split('\n'));
+
+  if (node.conditions.length > 0) {
+    groups.push(node.conditions.map((condition) => {
+      const items = condition.items.filter(Boolean).map((item) => `?${item}`).join(' ');
+      const destination = condition.targetLabel ? ` > ${condition.targetLabel}` : '';
+      return `${items}${destination}`;
+    }));
   }
 
   if (node.options.length > 0) {
-    if (node.text) lines.push('');
-    for (const option of node.options) {
+    groups.push(node.options.map((option) => {
       const destination = option.targetLabel ? ` > ${option.targetLabel}` : '';
-      lines.push(`= ${option.text}${destination}`);
-    }
+      return `= ${option.text}${destination}`;
+    }));
   }
+
+  groups.forEach((group, index) => {
+    if (index > 0) lines.push('');
+    lines.push(...group);
+  });
 
   return lines;
 }
@@ -273,7 +358,9 @@ export function serializeDialogueText(
 
     const textChanged = current.text !== parsedNode.originalText;
     const currentOptions = new Map(current.options.map((option) => [option.id, option]));
+    const currentConditions = new Map(current.conditions.map((condition) => [condition.id, condition]));
     const tokenOptionIds = new Set<string>();
+    const tokenConditionIds = new Set<string>();
     let emittedChangedText = false;
 
     for (const token of parsedNode.tokens) {
@@ -301,6 +388,17 @@ export function serializeDialogueText(
         continue;
       }
 
+      if (token.kind === 'condition') {
+        tokenConditionIds.add(token.conditionId);
+        const currentCondition = currentConditions.get(token.conditionId);
+        const parsedCondition = parsedNode.conditions.find((condition) => condition.id === token.conditionId);
+
+        if (currentCondition && parsedCondition) {
+          output.push(serializeLoadedCondition(currentCondition, parsedCondition));
+        }
+        continue;
+      }
+
       tokenOptionIds.add(token.optionId);
       const currentOption = currentOptions.get(token.optionId);
       const parsedOption = parsedNode.options.find((option) => option.id === token.optionId);
@@ -312,6 +410,13 @@ export function serializeDialogueText(
 
     if (textChanged && !emittedChangedText && current.text) {
       output.push(...current.text.split('\n'));
+    }
+
+    for (const condition of current.conditions) {
+      if (tokenConditionIds.has(condition.id)) continue;
+      const items = condition.items.filter(Boolean).map((item) => `?${item}`).join(' ');
+      const destination = condition.targetLabel ? ` > ${condition.targetLabel}` : '';
+      output.push(`${items}${destination}`);
     }
 
     for (const option of current.options) {

@@ -1,24 +1,3 @@
-<script module lang="ts">
-  import type { Node } from '@xyflow/svelte';
-
-  export type DialogueOption = {
-    id: string;
-    text: string;
-    targetId?: string;
-    targetLabel?: string;
-  };
-
-  export type DialogueNodeData = {
-    title: string;
-    text: string;
-    options: DialogueOption[];
-    initial?: boolean;
-    connectionHighlight?: 'source' | 'target' | 'both';
-  };
-
-  export type DialogueNode = Node<DialogueNodeData, 'dialogue'>;
-</script>
-
 <script lang="ts">
   import {
     Handle,
@@ -26,6 +5,7 @@
     type NodeProps,
     useUpdateNodeInternals
   } from '@xyflow/svelte';
+  import type { DialogueNode, NodeEditIntent } from './dialogueGraph';
 
   let { id, data }: NodeProps<DialogueNode> = $props();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -38,43 +18,101 @@
       .length;
   }
 
+  function optionLeft(index: number) {
+    const count = Math.max(1, data.options.length);
+    return `calc((100% / ${count}) * (${index} + 0.5))`;
+  }
+
+  function showConditionJump(event: MouseEvent, conditionId: string) {
+    event.stopPropagation();
+    data.onConditionTargetClick?.(id, conditionId);
+  }
+
+  function navigate(event: MouseEvent, intent: NodeEditIntent) {
+    event.stopPropagation();
+    data.onInspectorNavigate?.(id, intent);
+  }
+
+  function navigateFocus(event: MouseEvent, intent: NodeEditIntent) {
+    event.preventDefault();
+    event.stopPropagation();
+    data.onInspectorNavigate?.(id, { ...intent, focus: true });
+  }
+
   $effect(() => {
     data.options.length;
+    data.conditions.length;
     queueMicrotask(() => updateNodeInternals(id));
   });
 </script>
 
 <div
-  class={`node-card compact-node${data.initial ? ' initial-node' : ''}${data.connectionHighlight ? ' connection-endpoint' : ''}`}
+  class={`node-card compact-node options-node${data.initial ? ' initial-node' : ''}${data.editorSelected ? ' editor-selected' : ''}${data.connectionHighlight ? ' connection-endpoint' : ''}`}
 >
   <Handle type="target" position={Position.Top} />
 
-  <div class="node-title">
+  <div
+    class="node-title editable-node-part"
+    onclick={(event) => navigate(event, { section: 'name' })}
+    ondblclick={(event) => navigateFocus(event, { section: 'name', field: 'name' })}
+  >
     {#if data.initial}<span class="start-marker">▶</span>{/if}
     <span>{data.title}</span>
+    <span class="node-kind-badge">OPCIONES</span>
   </div>
 
-  <div class="node-text-compact">
+  <div
+    class="node-text-compact editable-node-part"
+    onclick={(event) => navigate(event, { section: 'dialogue' })}
+    ondblclick={(event) => navigateFocus(event, { section: 'dialogue', field: 'text' })}
+  >
     <div class="node-text-preview">{data.text || 'Sin texto'}</div>
     {#if dialogueLineCount() > 2}
       <div class="node-text-more">{dialogueLineCount()} líneas de diálogo</div>
     {/if}
   </div>
 
+  {#if data.conditions.length > 0}
+    <div class="node-conditions-title">{data.conditions.length} {data.conditions.length === 1 ? 'condición' : 'condiciones'}</div>
+
+    {#each data.conditions as condition}
+      <div
+        class="node-condition-row embedded-condition-row editable-node-part"
+        onclick={(event) => navigate(event, { section: 'conditions', itemId: condition.id })}
+        ondblclick={(event) => navigateFocus(event, { section: 'conditions', itemId: condition.id, field: 'items' })}
+      >
+        <span class="condition-number">?{condition.order}.</span>
+        <span class="condition-text-ellipsis">{condition.items.join(' + ') || '—'}</span>
+        <button
+          type="button"
+          class="condition-target-button nodrag nopan"
+          onclick={(event) => showConditionJump(event, condition.id)}
+        >→ {condition.targetLabel || '—'}</button>
+        <Handle
+          id={condition.id}
+          type="source"
+          position={Position.Right}
+          class="condition-side-handle"
+          isConnectable={false}
+        />
+      </div>
+    {/each}
+  {/if}
+
   {#if data.options.length > 0}
     <div class="node-options-title">{data.options.length} {data.options.length === 1 ? 'opción' : 'opciones'}</div>
 
-    {#each data.options as option}
-      <div class="node-option compact-option">
+    {#each data.options as option, index}
+      <div
+        class="node-option compact-option editable-node-part"
+        onclick={(event) => navigate(event, { section: 'options', itemId: option.id })}
+        ondblclick={(event) => navigateFocus(event, { section: 'options', itemId: option.id, field: 'option' })}
+      >
         <div class="node-option-copy compact-option-copy">
-          <span class="equals-marker">=</span>
+          <span class="option-number">{index + 1}.</span>
           <span class="option-text-ellipsis">{option.text}</span>
           <span class="option-target-inline">
-            {#if option.targetLabel}
-              → {option.targetLabel}
-            {:else}
-              → —
-            {/if}
+            {#if option.targetLabel}→ {option.targetLabel}{:else}→ —{/if}
           </span>
         </div>
       </div>
@@ -82,12 +120,13 @@
 
     <div class="node-output-band">
       {#each data.options as option, index}
+        <div class="option-output-number" style={`left: ${optionLeft(index)};`}>{index + 1}</div>
         <Handle
           id={option.id}
           type="source"
           position={Position.Bottom}
           class="option-handle"
-          style={`left: calc((100% / ${data.options.length}) * (${index} + 0.5));`}
+          style={`left: ${optionLeft(index)};`}
         />
       {/each}
     </div>
