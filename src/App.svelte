@@ -110,6 +110,30 @@
   let viewportToRestore = $state.raw<Viewport | null>(null);
   let currentViewport = $state.raw<Viewport>({ x: 0, y: 0, zoom: 1 });
 
+  // 053: TXT editable y sincronización bidireccional
+  let editableScriptText = $state('');
+  let textSyncMessage = $state('');
+  let textHasPendingChanges = $state(false);
+  let textParseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // 054: Inspector izquierda · Grafo centro · TXT derecha
+  // 055: Inspector fijo · TXT colapsable
+  // 056: pestaña lateral para TXT
+  // 057: pestaña Guion fija
+  let txtPanelOpen = $state(true);
+
+  // 048: modo admin temporal + comprobación de publicación oficial.
+  // No publica nada todavía: sólo mira si el nombre ya existe.
+  let isAdminSession = $state(
+    typeof sessionStorage !== 'undefined'
+      && sessionStorage.getItem('zenode:admin') === 'true'
+  );
+  let validateOpen = $state(false);
+  let validateChecking = $state(false);
+  let validateExists = $state<boolean | null>(null);
+  let validateError = $state('');
+  let validateFilename = $state('');
+
   let selectedNode = $derived(nodes.find((node) => node.id === selectedId));
   let selectedEdge = $derived(edges.find((edge) => edge.id === selectedEdgeId));
 
@@ -158,6 +182,102 @@
     )
   );
 
+  $effect(() => {
+    const serialized = scriptText;
+    if (!textHasPendingChanges) {
+      editableScriptText = serialized;
+    }
+  });
+
+  function originalValidateFilename() {
+    let filename = (currentFilename || 'guion.txt').trim();
+
+    try {
+      const source = JSON.parse(
+        sessionStorage.getItem('zenode:github-source') || 'null'
+      ) as { path?: string } | null;
+
+      const sourceName = source?.path?.split('/').filter(Boolean).pop();
+      if (sourceName) filename = sourceName;
+    } catch {
+      // Si los metadatos de origen fallan, usamos el nombre actual del editor.
+    }
+
+    return filename;
+  }
+
+  async function checkValidateFilename() {
+    const filename = validateFilename.trim();
+    validateError = '';
+    validateExists = null;
+
+    if (!filename) {
+      validateError = 'Escribe un nombre para el guion.';
+      return;
+    }
+
+    validateChecking = true;
+
+    try {
+      const encodedPath = filename
+        .split('/')
+        .map((part) => encodeURIComponent(part))
+        .join('/');
+
+      const response = await fetch(
+        `https://api.github.com/repos/aik3n/ZeMobida_guiones/contents/${encodedPath}?ref=main`,
+        {
+          headers: {
+            Accept: 'application/vnd.github+json'
+          }
+        }
+      );
+
+      if (response.status === 404) {
+        validateExists = false;
+        return;
+      }
+
+      if (!response.ok) {
+        if (response.status === 403 || response.status === 429) {
+          throw new Error(
+            'GitHub ha limitado temporalmente las consultas. Prueba de nuevo más tarde.'
+          );
+        }
+
+        throw new Error(
+          `No se pudo comprobar el guion oficial (${response.status}).`
+        );
+      }
+
+      validateExists = true;
+    } catch (error) {
+      validateError = error instanceof Error
+        ? error.message
+        : 'No se pudo comprobar el guion oficial.';
+    } finally {
+      validateChecking = false;
+    }
+  }
+
+  async function validateCurrentScript() {
+    if (!isAdminSession) return;
+
+    validateOpen = true;
+    validateFilename = (currentFilename || 'guion.txt').trim();
+    await checkValidateFilename();
+  }
+
+  function editValidateFilename(value: string) {
+    validateFilename = value;
+    validateExists = null;
+    validateError = '';
+  }
+
+  function closeValidateDialog() {
+    validateOpen = false;
+  }
+
   function saveCurrentLayout(viewport = currentViewport) {
     if (!parsedScript) return;
     saveStoredLayout(currentFilename, nodes, viewport);
@@ -173,7 +293,8 @@
   }
 
   function selectedEdgeIsEditable() {
-    return selectedEdge?.data?.role === 'option';
+    return selectedEdge?.data?.role === 'option'
+      || selectedEdge?.data?.role === 'condition-preview';
   }
 
   function resolveTargetId(label?: string) {
@@ -206,9 +327,9 @@
       sourceHandle: conditionId,
       target: targetId,
       type: 'default',
-      selectable: false,
+      selectable: true,
       deletable: false,
-      focusable: false,
+      focusable: true,
       class: 'condition-preview-edge',
       data: { role: 'condition-preview', lane: 0 }
     };
@@ -320,8 +441,12 @@
   };
 
   function selectEdge({ edge }: { edge: Edge; event: MouseEvent }) {
-    if (edge.data?.role === 'condition-preview') return;
-    clearConditionPreview();
+    // Las conexiones de condición pueden ser temporales cuando el modo global
+    // está oculto. Si pulsamos una, no debemos borrarla antes de seleccionarla.
+    if (edge.data?.role !== 'condition-preview') {
+      clearConditionPreview();
+    }
+
     selectedEdgeId = edge.id;
     setSelectedNodeId(edge.source);
     setConnectionHighlights(edge.source, edge.target);
@@ -731,10 +856,39 @@
 
   function deleteSelectedConnection() {
     const edge = selectedEdge;
-    if (!edge || edge.data?.role !== 'option') return;
+    if (!edge) return;
 
     const sourceNode = nodes.find((node) => node.id === edge.source);
     const targetNode = nodes.find((node) => node.id === edge.target);
+
+    if (edge.data?.role === 'condition-preview') {
+      const condition = sourceNode?.data.conditions.find((item) => item.id === edge.sourceHandle);
+
+      edges = routeEdges(edges.filter((item) => item.id !== edge.id), nodes);
+      nodes = nodes.map((node) => node.id !== edge.source
+        ? node
+        : {
+            ...node,
+            data: {
+              ...node.data,
+              conditions: node.data.conditions.map((item) =>
+                item.id === edge.sourceHandle
+                  ? { ...item, targetId: undefined, targetLabel: undefined }
+                  : item
+              )
+            }
+          }
+      );
+
+      selectedEdgeId = '';
+      setConnectionHighlights();
+      if (showAllConditionJumps) refreshConditionPreviews();
+      statusMessage = `Conexión borrada: ?${condition?.order ?? ''} → ${targetNode?.data.title ?? 'destino'}`;
+      return;
+    }
+
+    if (edge.data?.role !== 'option') return;
+
     const option = sourceNode?.data.options.find((item) => item.id === edge.sourceHandle);
 
     edges = routeEdges(edges.filter((item) => item.id !== edge.id), nodes);
@@ -776,16 +930,46 @@
   function connectOption(connection: Connection) {
     const source = connection.source;
     const target = connection.target;
-    const optionId = connection.sourceHandle;
-    if (!source || !target || !optionId) return;
+    const handleId = connection.sourceHandle;
+    if (!source || !target || !handleId) return;
 
     const sourceNode = nodes.find((node) => node.id === source);
     const targetNode = nodes.find((node) => node.id === target);
-    const option = sourceNode?.data.options.find((item) => item.id === optionId);
-    if (!sourceNode || !targetNode || !option) return;
+    if (!sourceNode || !targetNode) return;
+
+    const option = sourceNode.data.options.find((item) => item.id === handleId);
+    const condition = sourceNode.data.conditions.find((item) => item.id === handleId);
+    if (!option && !condition) return;
 
     clearConditionPreview();
-    edges = edges.filter((edge) => !(edge.source === source && edge.sourceHandle === optionId));
+    edges = edges.filter((edge) => !(edge.source === source && edge.sourceHandle === handleId));
+
+    if (condition) {
+      nodes = nodes.map((node) => node.id !== source
+        ? node
+        : {
+            ...node,
+            data: {
+              ...node.data,
+              conditions: node.data.conditions.map((item) =>
+                item.id === handleId
+                  ? { ...item, targetId: target, targetLabel: targetNode.data.title }
+                  : item
+              )
+            }
+          }
+      );
+
+      const conditionEdge = conditionPreviewEdge(source, handleId, target);
+      edges = routeEdges([...edges, conditionEdge], nodes);
+      selectedEdgeId = conditionEdge.id;
+      setSelectedNodeId(source);
+      setConnectionHighlights(source, target);
+      sidebarMode = 'inspector';
+      statusMessage = `Condición ?${condition.order} → ${targetNode.data.title}`;
+      return;
+    }
+
     edges = routeEdges(addEdge({ ...connection, type: 'default', data: { role: 'option' } }, edges), nodes);
 
     nodes = nodes.map((node) => node.id !== source
@@ -795,7 +979,7 @@
           data: {
             ...node.data,
             options: node.data.options.map((item) =>
-              item.id === optionId
+              item.id === handleId
                 ? { ...item, targetId: target, targetLabel: targetNode.data.title }
                 : item
             )
@@ -804,25 +988,13 @@
     );
   }
 
-  function openFilePicker() {
-    fileInput?.click();
-  }
 
-  async function loadScriptFile(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+  function buildDialogueNodesFromParsed(parsed: ParsedScript): DialogueNode[] {
+    const idByLabel = new Map(
+      parsed.nodes.map((node) => [node.title.toLowerCase(), node.id])
+    );
 
-    const text = await file.text();
-    const parsed = parseDialogueText(text, file.name);
-    if (parsed.nodes.length === 0) {
-      statusMessage = 'No he encontrado ningún nodo # en ese archivo.';
-      input.value = '';
-      return;
-    }
-
-    const idByLabel = new Map(parsed.nodes.map((node) => [node.title.toLowerCase(), node.id]));
-    const loadedNodes = parsed.nodes.map((node, index) => {
+    return parsed.nodes.map((node, index) => {
       const data = {
         title: node.title,
         text: node.originalText,
@@ -860,15 +1032,16 @@
         data
       } as DialogueNode;
     });
+  }
 
-    showAllConditionJumps = false;
-    const storedLayout = loadStoredLayout(file.name);
-    nodes = applyStoredPositions(layoutDialogueNodes(loadedNodes), storedLayout);
-    edges = [];
-    for (const node of nodes) {
+  function buildVisibleEdges(graphNodes: DialogueNode[]): Edge[] {
+    const nextEdges: Edge[] = [];
+
+    for (const node of graphNodes) {
       for (const option of node.data.options) {
         if (!option.targetId) continue;
-        edges.push({
+
+        nextEdges.push({
           id: `${node.id}-${option.id}-${option.targetId}`,
           source: node.id,
           sourceHandle: option.id,
@@ -877,10 +1050,180 @@
           data: { role: 'option', lane: 0 }
         });
       }
+
+      if (!showAllConditionJumps) continue;
+
+      for (const condition of node.data.conditions) {
+        if (!condition.targetId) continue;
+        nextEdges.push(
+          conditionPreviewEdge(node.id, condition.id, condition.targetId)
+        );
+      }
     }
-    edges = routeEdges(edges, nodes);
+
+    return routeEdges(nextEdges, graphNodes);
+  }
+
+  function liveTextIssue(text: string, parsed: ParsedScript) {
+    if (parsed.nodes.length === 0) {
+      return 'TXT pendiente: añade al menos un nodo #.';
+    }
+
+    const lines = text.replace(/\r\n/g, '\n').split('\n');
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const trimmed = lines[index].trim();
+
+      if (/^#\s*$/.test(trimmed)) {
+        return `TXT pendiente: completa el nombre del nodo en la línea ${index + 1}.`;
+      }
+
+      if (trimmed.startsWith('?')) {
+        const code = trimmed.split("'")[0];
+        if (!/>\s*[^\s\[]+/.test(code)) {
+          return `TXT pendiente: completa el destino de la condición en la línea ${index + 1}.`;
+        }
+      }
+    }
+
+    const titles = new Set<string>();
+    for (const node of parsed.nodes) {
+      const key = node.title.trim().toLowerCase();
+      if (titles.has(key)) {
+        return `TXT pendiente: hay más de un nodo # ${node.title}.`;
+      }
+      titles.add(key);
+    }
+
+    return '';
+  }
+
+  function applyEditableScriptText(text: string) {
+    const parsed = parseDialogueText(text, currentFilename || 'guion.txt');
+    const issue = liveTextIssue(text, parsed);
+
+    if (issue) {
+      textSyncMessage = issue;
+      statusMessage = issue;
+      return;
+    }
+
+    const oldPositions = new Map(
+      nodes.map((node) => [
+        node.data.title.trim().toLowerCase(),
+        { x: node.position.x, y: node.position.y }
+      ])
+    );
+    const oldSelectedTitle =
+      selectedNode?.data.title.trim().toLowerCase() ?? '';
+
+    let nextNodes = layoutDialogueNodes(buildDialogueNodesFromParsed(parsed));
+
+    nextNodes = nextNodes.map((node) => {
+      const previous = oldPositions.get(node.data.title.trim().toLowerCase());
+      return previous
+        ? { ...node, position: { ...previous } }
+        : node;
+    });
+
+    nodes = nextNodes;
+    edges = buildVisibleEdges(nodes);
+    parsedScript = parsed;
+    selectedEdgeId = '';
+    setConnectionHighlights();
+
+    const nextSelected = oldSelectedTitle
+      ? nodes.find(
+          (node) => node.data.title.trim().toLowerCase() === oldSelectedTitle
+        )
+      : undefined;
+
+    setSelectedNodeId(nextSelected?.id ?? nodes[0]?.id ?? '');
+
+    nextNodeNumber = nodes.length + 1;
+    nextOptionNumber =
+      parsed.nodes.reduce((total, node) => total + node.options.length, 0) + 1;
+    nextEffectNumber =
+      parsed.nodes.reduce(
+        (total, node) =>
+          total +
+          node.options.reduce(
+            (sum, option) => sum + option.effects.length,
+            0
+          ),
+        0
+      ) + 1;
+    nextConditionNumber =
+      parsed.nodes.reduce(
+        (total, node) => total + node.conditions.length,
+        0
+      ) + 1;
+
+    textHasPendingChanges = false;
+    textSyncMessage =
+      `Sincronizado · ${nodes.length} nodo${nodes.length === 1 ? '' : 's'}`;
+    statusMessage = textSyncMessage;
+    saveCurrentLayout();
+  }
+
+  function scheduleEditableScriptParse(value: string) {
+    editableScriptText = value;
+    textHasPendingChanges = true;
+    textSyncMessage = 'Interpretando cambios…';
+
+    if (textParseTimer) {
+      clearTimeout(textParseTimer);
+    }
+
+    textParseTimer = setTimeout(() => {
+      textParseTimer = null;
+      applyEditableScriptText(editableScriptText);
+    }, 400);
+  }
+
+  function openFilePicker() {
+    fileInput?.click();
+  }
+
+  async function loadScriptFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    // GithubScripts marca justo antes de disparar el change si este File viene
+    // del repositorio. Si el usuario abre un TXT local, limpiamos el origen
+    // remoto anterior para que Validar nunca reutilice un nombre viejo.
+    const openingFromGithub =
+      sessionStorage.getItem('zenode:github-source-pending') === 'true';
+    sessionStorage.removeItem('zenode:github-source-pending');
+
+    if (!openingFromGithub) {
+      sessionStorage.removeItem('zenode:github-source');
+    }
+
+    const text = await file.text();
+    const parsed = parseDialogueText(text, file.name);
+    if (parsed.nodes.length === 0) {
+      statusMessage = 'No he encontrado ningún nodo # en ese archivo.';
+      input.value = '';
+      return;
+    }
+
+    const loadedNodes = buildDialogueNodesFromParsed(parsed);
+
+    showAllConditionJumps = false;
+    const storedLayout = loadStoredLayout(file.name);
+    nodes = applyStoredPositions(layoutDialogueNodes(loadedNodes), storedLayout);
+    edges = buildVisibleEdges(nodes);
 
     parsedScript = parsed;
+    editableScriptText = text;
+    textHasPendingChanges = false;
+    textSyncMessage = '';
+    if (textParseTimer) {
+      clearTimeout(textParseTimer);
+      textParseTimer = null;
+    }
     selectedEdgeId = '';
     currentFilename = file.name;
     // Al abrir un guion conservamos las posiciones guardadas, pero siempre
@@ -903,7 +1246,7 @@
   }
 
   function saveScript() {
-    const blob = new Blob([scriptText], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([editableScriptText], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -920,11 +1263,26 @@
   <header>
     <div class="brand-block">
       <strong>ZeMobida</strong>
-      <span>{currentFilename}</span>
+      <input
+        class="brand-filename-input"
+        bind:value={currentFilename}
+        placeholder="guion.txt"
+        aria-label="Nombre del guion"
+        title="Nombre del guion"
+      />
     </div>
 
     <div class="header-actions">
       {#if statusMessage}<span class="status-message">{statusMessage}</span>{/if}
+
+      <button
+        type="button"
+        class="header-button node-drag-tool"
+        draggable={true}
+        ondragstart={(event) => startPaletteDrag(event, 'options')}
+        title="Arrastra al lienzo para crear un nodo"
+      >▣ Nodo</button>
+
       <button
         type="button"
         class={showAllConditionJumps ? 'header-button condition-toggle-active' : 'header-button'}
@@ -944,7 +1302,34 @@
       >Borrar conexión</button>
       <button type="button" class="header-button" onclick={organizeGraph}>Ordenar</button>
       <button type="button" class="header-button" onclick={centerGraph}>Centrar</button>
+      <!-- 059: carga oficiales y propuestas -->
+      <!-- 060: eventos separados para GitHub -->
+      <button
+        type="button"
+        class="header-button"
+        onclick={() => window.dispatchEvent(
+          new Event('zenode:load-official-scripts')
+        )}
+        title="Cargar un guion del repositorio oficial"
+      >Carga oficiales</button>
+
+      <button
+        type="button"
+        class="header-button"
+        onclick={() => window.dispatchEvent(
+          new Event('zenode:load-proposal-scripts')
+        )}
+        title="Cargar un guion del repositorio de propuestas"
+      >Carga propuestas</button>
       <button type="button" class="header-button" onclick={openFilePicker}>Abrir TXT</button>
+      {#if isAdminSession}
+        <button
+          type="button"
+          class="header-button validate-official-button"
+          onclick={validateCurrentScript}
+          disabled={validateChecking}
+        >✓ Validar</button>
+      {/if}
       <button type="button" class="header-button primary" onclick={saveScript}>Guardar TXT</button>
       <input
         class="hidden-file-input"
@@ -956,34 +1341,94 @@
     </div>
   </header>
 
-  <main>
-    <section class="palette">
-      <div class="palette-heading">Paleta</div>
+  {#if validateOpen}
+    <div class="validate-overlay">
+      <div class="validate-dialog">
+        <div class="validate-dialog-heading">
+          <strong>Validar guion</strong>
+          <span>{validateFilename || currentFilename}</span>
+        </div>
 
-      <div
-        class="palette-node"
-        draggable={true}
-        ondragstart={(event) => startPaletteDrag(event, 'options')}
-      >
-        <span class="palette-node-icon">▣</span>
-        <div>
-          <strong>Opciones</strong>
-          <small>texto + respuestas</small>
+        {#if validateChecking}
+          <p class="validate-dialog-text">Comprobando los guiones oficiales…</p>
+        {:else if validateError}
+          <div class="validate-result validate-result-error">
+            {validateError}
+          </div>
+        {:else if validateExists === true}
+          <div class="validate-result validate-result-warning">
+            <strong>Ya existe {validateFilename.trim()}.</strong>
+            <span>
+              Si continúas, esta versión sustituirá al guion oficial actual.
+            </span>
+          </div>
+        {:else if validateExists === false}
+          <div class="validate-result validate-result-new">
+            <strong>{validateFilename.trim()} es un guion nuevo.</strong>
+            <span>
+              Se publicará como nuevo guion oficial.
+            </span>
+          </div>
+        {:else}
+          <div class="validate-result validate-result-pending">
+            Comprueba el nombre antes de continuar.
+          </div>
+        {/if}
+
+        <div class="validate-dialog-note">
+          Esta prueba todavía no modifica ningún repositorio.
+        </div>
+
+        <div class="validate-dialog-actions">
+          <button
+            type="button"
+            class="header-button"
+            onclick={closeValidateDialog}
+          >Cancelar</button>
+
+          {#if validateExists === true && !validateChecking}
+            <button
+              type="button"
+              class="header-button danger"
+              disabled
+              title="Se conectará al Worker en el siguiente paso"
+            >Sobrescribir</button>
+          {:else if validateExists === false && !validateChecking}
+            <button
+              type="button"
+              class="header-button validate-official-button"
+              disabled
+              title="Se conectará al Worker en el siguiente paso"
+            >✓ Validar</button>
+          {/if}
         </div>
       </div>
+    </div>
+  {/if}
 
-      <div
-        class="palette-node palette-conditions"
-        draggable={true}
-        ondragstart={(event) => startPaletteDrag(event, 'conditions')}
-      >
-        <span class="palette-node-icon">?</span>
-        <div>
-          <strong>Condiciones</strong>
-          <small>sólo saltos ?</small>
-        </div>
-      </div>
-    </section>
+  <main
+    class="workspace"
+    class:txt-closed={!txtPanelOpen}
+  >
+    <aside class="inspector-panel">
+      <InspectorView
+        node={selectedNode}
+        request={inspectorRequest}
+        {availableNodeTitles}
+        onUpdateNode={updateSelected}
+        onAddCondition={addCondition}
+        onUpdateConditionItems={updateConditionItems}
+        onUpdateConditionTarget={updateConditionTarget}
+        onRemoveCondition={removeCondition}
+        onAddOption={addOption}
+        onUpdateOption={updateOption}
+        onUpdateOptionTarget={updateOptionTarget}
+        onAddOptionEffect={addOptionEffect}
+        onUpdateOptionEffect={updateOptionEffect}
+        onRemoveOptionEffect={removeOptionEffect}
+        onRemoveOption={removeOption}
+      />
+    </aside>
 
     <section
       class="canvas"
@@ -1018,42 +1463,48 @@
       </SvelteFlow>
     </section>
 
-    <aside>
-      <div class="sidebar-tabs">
-        <button type="button" class:active={sidebarMode === 'inspector'} onclick={() => (sidebarMode = 'inspector')}>Inspector</button>
-        <button type="button" class:active={sidebarMode === 'txt'} onclick={() => (sidebarMode = 'txt')}>TXT</button>
+    <button
+      type="button"
+      class="txt-edge-toggle"
+      class:txt-edge-open={txtPanelOpen}
+      onclick={() => (txtPanelOpen = !txtPanelOpen)}
+      aria-label={txtPanelOpen ? 'Cerrar panel Guion' : 'Abrir panel Guion'}
+      title={txtPanelOpen ? 'Cerrar Guion' : 'Abrir Guion'}
+    >
+      <span class="txt-edge-arrow">{txtPanelOpen ? '›' : '‹'}</span>
+      <span class="txt-edge-label">Guion</span>
+    </button>
+
+    <aside
+      class="txt-panel"
+      class:panel-collapsed={!txtPanelOpen}
+      aria-hidden={!txtPanelOpen}
+    >
+      <div class="txt-heading txt-panel-heading">
+        <div>
+          <strong>TXT</strong>
+          <small>{currentFilename}</small>
+        </div>
       </div>
 
-      {#if sidebarMode === 'txt'}
-        <div class="txt-heading">
-          <div>
-            <strong>Texto del guion</strong>
-            <small>vista previa de lo que se guardará</small>
-          </div>
-        </div>
-        <textarea class="script-preview" readonly value={scriptText}></textarea>
-        <div class="info-box compact">
-          El tipo visual se deriva del contenido: si hay alguna <b>=</b>, es nodo de Opciones; si no hay opciones y sí hay <b>?</b>, es nodo de Condiciones. El TXT sigue siendo la fuente de verdad.
-        </div>
-      {:else}
-        <InspectorView
-          node={selectedNode}
-          request={inspectorRequest}
-          {availableNodeTitles}
-          onUpdateNode={updateSelected}
-          onAddCondition={addCondition}
-          onUpdateConditionItems={updateConditionItems}
-          onUpdateConditionTarget={updateConditionTarget}
-          onRemoveCondition={removeCondition}
-          onAddOption={addOption}
-          onUpdateOption={updateOption}
-          onUpdateOptionTarget={updateOptionTarget}
-          onAddOptionEffect={addOptionEffect}
-          onUpdateOptionEffect={updateOptionEffect}
-          onRemoveOptionEffect={removeOptionEffect}
-          onRemoveOption={removeOption}
-        />
-      {/if}
+      <textarea
+        class="script-preview"
+        value={editableScriptText}
+        oninput={(event) => scheduleEditableScriptParse(event.currentTarget.value)}
+        spellcheck="false"
+      ></textarea>
+
+      <div
+        class:text-sync-warning={textHasPendingChanges}
+        class="text-sync-status"
+      >
+        {textSyncMessage || 'TXT y grafo sincronizados'}
+      </div>
+
+      <div class="info-box compact">
+        El TXT es la fuente de verdad. Los cambios se interpretan automáticamente
+        y el grafo conserva el último estado válido mientras estás escribiendo.
+      </div>
     </aside>
   </main>
 </div>

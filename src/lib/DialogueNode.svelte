@@ -101,7 +101,7 @@
           type="source"
           position={Position.Right}
           class="condition-side-handle"
-          isConnectable={false}
+          isConnectable={true}
         />
       </div>
     {/each}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
+  // 060: dos cargas GitHub explícitas y simples
   type GithubScript = {
     name: string;
     path: string;
@@ -9,24 +10,43 @@
     download_url: string | null;
   };
 
-  const LIST_URL = 'https://api.github.com/repos/aik3n/ZeMobida_guiones/contents?ref=main';
+  type SourceConfig = {
+    repository: string;
+    title: string;
+  };
+
+  const OFFICIAL: SourceConfig = {
+    repository: 'aik3n/ZeMobida_guiones',
+    title: 'Guiones oficiales'
+  };
+
+  const PROPOSALS: SourceConfig = {
+    repository: 'aik3n/ZeMobida_guiones_propuestas',
+    title: 'Propuestas'
+  };
 
   let open = $state(false);
   let loadingList = $state(false);
   let openingName = $state('');
   let error = $state('');
   let scripts = $state.raw<GithubScript[]>([]);
-  let triggerButton: HTMLButtonElement | null = null;
+  let currentSource = $state<SourceConfig>(OFFICIAL);
 
-  async function fetchScripts(force = false) {
+  function listUrl(repository: string) {
+    return `https://api.github.com/repos/${repository}/contents?ref=main`;
+  }
+
+  async function fetchScripts(config: SourceConfig) {
+    currentSource = config;
     open = true;
-    error = '';
-
-    if (scripts.length > 0 && !force) return;
-
     loadingList = true;
+    openingName = '';
+    error = '';
+    scripts = [];
+
     try {
-      const response = await fetch(LIST_URL, {
+      const response = await fetch(listUrl(config.repository), {
+        cache: 'no-store',
         headers: {
           Accept: 'application/vnd.github+json'
         }
@@ -34,17 +54,30 @@
 
       if (!response.ok) {
         if (response.status === 403 || response.status === 429) {
-          throw new Error('GitHub ha limitado temporalmente las consultas. Prueba de nuevo más tarde.');
+          throw new Error(
+            'GitHub ha limitado temporalmente las consultas. Prueba de nuevo más tarde.'
+          );
         }
-        throw new Error(`No se pudo obtener la lista de guiones (${response.status}).`);
+
+        throw new Error(
+          `No se pudo obtener la lista de guiones (${response.status}).`
+        );
       }
 
       const data = await response.json() as GithubScript[];
+
       scripts = data
-        .filter((item) => item.type === 'file' && item.name.toLowerCase().endsWith('.txt'))
+        .filter(
+          (item) =>
+            item.type === 'file' &&
+            item.name.toLowerCase().endsWith('.txt')
+        )
         .sort((a, b) => a.name.localeCompare(b.name, 'es'));
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'No se pudo obtener la lista de guiones.';
+      error =
+        cause instanceof Error
+          ? cause.message
+          : 'No se pudo obtener la lista de guiones.';
     } finally {
       loadingList = false;
     }
@@ -57,36 +90,60 @@
     error = '';
 
     try {
-      const response = await fetch(script.download_url, { cache: 'no-store' });
+      const response = await fetch(script.download_url, {
+        cache: 'no-store'
+      });
+
       if (!response.ok) {
-        throw new Error(`No se pudo abrir ${script.name} (${response.status}).`);
+        throw new Error(
+          `No se pudo abrir ${script.name} (${response.status}).`
+        );
       }
 
       const text = await response.text();
-      const input = document.querySelector('.hidden-file-input') as HTMLInputElement | null;
+      const input = document.querySelector(
+        '.hidden-file-input'
+      ) as HTMLInputElement | null;
 
       if (!input) {
-        throw new Error('ZeNode no encuentra el selector interno de archivos.');
+        throw new Error(
+          'ZeMobida no encuentra el selector interno de archivos.'
+        );
       }
 
       const file = new File([text], script.name, {
         type: 'text/plain;charset=utf-8'
       });
+
       const transfer = new DataTransfer();
       transfer.items.add(file);
       input.files = transfer.files;
 
-      sessionStorage.setItem('zenode:github-source', JSON.stringify({
-        repository: 'aik3n/ZeMobida_guiones',
-        branch: 'main',
-        path: script.path,
-        sha: script.sha
-      }));
+      sessionStorage.setItem(
+        'zenode:github-source',
+        JSON.stringify({
+          repository: currentSource.repository,
+          branch: 'main',
+          path: script.path,
+          sha: script.sha
+        })
+      );
 
-      input.dispatchEvent(new Event('change', { bubbles: true }));
+      sessionStorage.setItem(
+        'zenode:github-source-pending',
+        'true'
+      );
+
+      input.dispatchEvent(
+        new Event('change', { bubbles: true })
+      );
+
       open = false;
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : `No se pudo abrir ${script.name}.`;
+      error =
+        cause instanceof Error
+          ? cause.message
+          : `No se pudo abrir ${script.name}.`;
     } finally {
       openingName = '';
     }
@@ -96,26 +153,35 @@
     if (!openingName) open = false;
   }
 
+  function openOfficial() {
+    void fetchScripts(OFFICIAL);
+  }
+
+  function openProposals() {
+    void fetchScripts(PROPOSALS);
+  }
+
   onMount(() => {
-    const actions = document.querySelector('.header-actions');
-    if (!actions) return;
+    window.addEventListener(
+      'zenode:load-official-scripts',
+      openOfficial
+    );
 
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'header-button';
-    button.textContent = 'Abrir guiones';
-    button.title = 'Abrir un guion del repositorio oficial';
-    button.addEventListener('click', () => void fetchScripts());
-
-    const localOpenButton = Array.from(actions.querySelectorAll('button'))
-      .find((item) => item.textContent?.trim() === 'Abrir TXT');
-
-    actions.insertBefore(button, localOpenButton ?? null);
-    triggerButton = button;
+    window.addEventListener(
+      'zenode:load-proposal-scripts',
+      openProposals
+    );
 
     return () => {
-      button.remove();
-      triggerButton = null;
+      window.removeEventListener(
+        'zenode:load-official-scripts',
+        openOfficial
+      );
+
+      window.removeEventListener(
+        'zenode:load-proposal-scripts',
+        openProposals
+      );
     };
   });
 </script>
@@ -136,9 +202,12 @@
     >
       <div class="github-picker-heading">
         <div>
-          <strong id="github-picker-title">Guiones disponibles</strong>
-          <small>ZeMobida</small>
+          <strong id="github-picker-title">
+            {currentSource.title}
+          </strong>
+          <small>{currentSource.repository}</small>
         </div>
+
         <button
           type="button"
           class="github-picker-close"
@@ -150,14 +219,25 @@
       </div>
 
       {#if loadingList}
-        <div class="github-picker-state">Cargando guiones…</div>
+        <div class="github-picker-state">
+          Cargando guiones…
+        </div>
       {:else if error}
-        <div class="github-picker-error">{error}</div>
-        <button type="button" class="github-picker-retry" onclick={() => fetchScripts(true)}>
+        <div class="github-picker-error">
+          {error}
+        </div>
+
+        <button
+          type="button"
+          class="github-picker-retry"
+          onclick={() => fetchScripts(currentSource)}
+        >
           Reintentar
         </button>
       {:else if scripts.length === 0}
-        <div class="github-picker-state">No hay guiones .txt disponibles.</div>
+        <div class="github-picker-state">
+          No hay guiones .txt disponibles.
+        </div>
       {:else}
         <div class="github-script-list">
           {#each scripts as script}
@@ -168,7 +248,11 @@
               disabled={Boolean(openingName)}
             >
               <span>{script.name}</span>
-              <small>{openingName === script.name ? 'Abriendo…' : 'Abrir'}</small>
+              <small>
+                {openingName === script.name
+                  ? 'Abriendo…'
+                  : 'Abrir'}
+              </small>
             </button>
           {/each}
         </div>

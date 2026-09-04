@@ -110,6 +110,33 @@ function mountAdminIndicator() {
   document.body.appendChild(adminUi);
 }
 
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+
+  return Boolean(
+    target.closest(
+      'input, textarea, select, [contenteditable="true"], [contenteditable=""], [role="textbox"]'
+    )
+  );
+}
+
+function installDeleteConnectionShortcut() {
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Delete') return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (isTypingTarget(event.target)) return;
+
+    const deleteConnectionButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Borrar conexión');
+
+    if (!deleteConnectionButton || deleteConnectionButton.disabled) return;
+
+    event.preventDefault();
+    deleteConnectionButton.click();
+  });
+}
+
 if (isAdminPath()) {
   renderAdminGate();
 } else {
@@ -126,4 +153,5 @@ if (isAdminPath()) {
   });
 
   mountAdminIndicator();
+  installDeleteConnectionShortcut();
 }

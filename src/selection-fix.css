@@ -26,3 +26,11 @@
   background: #15803d !important;
   color: #fff !important;
 }
+
+
+/* 047: selección de conexiones de condición */
+.svelte-flow__edge.condition-preview-edge.selected .svelte-flow__edge-path {
+  stroke-width: 5px !important;
+  stroke: #334155 !important;
+  opacity: 1 !important;
+}
