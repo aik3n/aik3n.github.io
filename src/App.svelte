@@ -156,6 +156,209 @@
   let txtPanelOpen = $state(false);
   let txtPanelWidth = $state<number | null>(null);
 
+  // 112: ancho ajustable del panel oficial
+  let officialPanelWidth = $state<number | null>(null);
+
+  // 106: gemelo oficial del guion local
+  // 107: panel oficial independiente a la izquierda
+  let officialPanelOpen = $state(false);
+  let officialTwinText = $state('');
+  let officialTwinExists = $state(false);
+  let officialTwinLoading = $state(false);
+  let officialTwinError = $state('');
+  let officialTwinRequest = 0;
+
+  function normalizeTwinText(text: string) {
+    return text.replace(/\r\n/g, '\n');
+  }
+
+  let officialTwinMatches = $derived(
+    officialTwinExists
+      && normalizeTwinText(officialTwinText)
+        === normalizeTwinText(editableScriptText)
+  );
+
+  let highlightedOfficialTwinText = $derived(
+    highlightDialogueText(officialTwinText)
+  );
+
+  $effect(() => {
+    const filename = currentFilename.trim();
+    const request = ++officialTwinRequest;
+
+    officialTwinText = '';
+    officialTwinExists = false;
+    officialTwinError = '';
+    officialPanelOpen = false;
+
+    if (!filename.toLowerCase().endsWith('.txt')) {
+      officialPanelOpen = false;
+      return;
+    }
+
+    officialTwinLoading = true;
+
+    const timer = window.setTimeout(async () => {
+      const url =
+        'https://raw.githubusercontent.com/'
+        + 'aik3n/ZeMobida_guiones/main/'
+        + encodeURIComponent(filename);
+
+      try {
+        const response = await fetch(url, { cache: 'no-store' });
+
+        if (request !== officialTwinRequest) return;
+
+        if (response.status === 404) {
+          officialTwinText = '';
+          officialTwinExists = false;
+          officialPanelOpen = false;
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            `No se pudo consultar el oficial (${response.status}).`
+          );
+        }
+
+        officialTwinText = await response.text();
+
+        if (request !== officialTwinRequest) return;
+
+        officialTwinExists = true;
+      } catch (cause) {
+        if (request !== officialTwinRequest) return;
+
+        officialTwinText = '';
+        officialTwinExists = false;
+        officialTwinError =
+          cause instanceof Error
+            ? cause.message
+            : 'No se pudo consultar el guion oficial.';
+
+        officialPanelOpen = false;
+      } finally {
+        if (request === officialTwinRequest) {
+          officialTwinLoading = false;
+        }
+      }
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  });
+
+  // 098: resaltado de sintaxis del lenguaje ZeMobida
+  let scriptTextarea = $state<HTMLTextAreaElement | null>(null);
+  let scriptHighlight = $state<HTMLElement | null>(null);
+
+  // 099: resaltado semántico como editor integrado ZeMobida
+  function escapeSyntaxHtml(value: string) {
+    return value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
+  }
+
+  function syntaxSpan(value: string, className: string) {
+    if (!value) return '';
+    return `<span class="${className}">${escapeSyntaxHtml(value)}</span>`;
+  }
+
+  function highlightEffects(value: string, baseClass = '') {
+    const effectPattern = /\[[^\]]*\]/g;
+    let html = '';
+    let cursor = 0;
+
+    for (const match of value.matchAll(effectPattern)) {
+      const index = match.index ?? 0;
+      const before = value.slice(cursor, index);
+
+      html += baseClass
+        ? syntaxSpan(before, baseClass)
+        : escapeSyntaxHtml(before);
+
+      html += syntaxSpan(match[0], 'syntax-effect');
+      cursor = index + match[0].length;
+    }
+
+    const rest = value.slice(cursor);
+    html += baseClass
+      ? syntaxSpan(rest, baseClass)
+      : escapeSyntaxHtml(rest);
+
+    return html;
+  }
+
+  function highlightDialogueLine(line: string) {
+    // DIALOGUE_FORMAT.md: ' inicia comentario hasta final de línea.
+    const commentIndex = line.indexOf("'");
+    const code = commentIndex >= 0 ? line.slice(0, commentIndex) : line;
+    const comment = commentIndex >= 0 ? line.slice(commentIndex) : '';
+
+    let codeHtml = '';
+
+    // DIALOGUE_FORMAT.md: cada línea se interpreta por su primer carácter.
+    if (code.startsWith('@')) {
+      codeHtml = highlightEffects(code, 'syntax-signature');
+    } else if (code.startsWith('#')) {
+      codeHtml = highlightEffects(code, 'syntax-node');
+    } else if (code.startsWith('>')) {
+      // El marcador > forma parte del salto: mismo cian que el destino.
+      codeHtml = highlightEffects(code, 'syntax-jump');
+    } else if (code.startsWith('?')) {
+      const jumpIndex = code.indexOf('>');
+
+      if (jumpIndex >= 0) {
+        codeHtml =
+          highlightEffects(code.slice(0, jumpIndex), 'syntax-condition')
+          + highlightEffects(code.slice(jumpIndex), 'syntax-jump');
+      } else {
+        codeHtml = highlightEffects(code, 'syntax-condition');
+      }
+    } else if (code.startsWith('=')) {
+      const jumpIndex = code.indexOf('>');
+
+      if (jumpIndex >= 0) {
+        codeHtml =
+          highlightEffects(code.slice(0, jumpIndex), 'syntax-option')
+          + highlightEffects(code.slice(jumpIndex), 'syntax-jump');
+      } else {
+        codeHtml = highlightEffects(code, 'syntax-option');
+      }
+    } else {
+      // Texto normal del PNJ; sólo se colorean posibles efectos [ ].
+      codeHtml = highlightEffects(code);
+    }
+
+    const commentHtml = comment
+      ? syntaxSpan(comment, 'syntax-comment')
+      : '';
+
+    return `${codeHtml}${commentHtml}`;
+  }
+
+  function highlightDialogueText(text: string) {
+    const highlighted = text
+      .split('\n')
+      .map(highlightDialogueLine)
+      .join('\n');
+
+    return highlighted + (text.endsWith('\n') ? ' ' : '');
+  }
+
+  let highlightedScriptText = $derived(
+    highlightDialogueText(editableScriptText)
+  );
+
+  function syncScriptHighlightScroll() {
+    if (!scriptTextarea || !scriptHighlight) return;
+    scriptHighlight.scrollTop = scriptTextarea.scrollTop;
+    scriptHighlight.scrollLeft = scriptTextarea.scrollLeft;
+  }
+
   function startTxtPanelResize(event: PointerEvent) {
     if (!txtPanelOpen) return;
 
@@ -190,6 +393,95 @@
       const desiredWidth = rect.right - clientX;
 
       txtPanelWidth = Math.round(
+        Math.max(
+          minPanelWidth,
+          Math.min(maxPanelWidth, desiredWidth)
+        )
+      );
+    };
+
+    const move = (moveEvent: PointerEvent) => {
+      resize(moveEvent.clientX);
+    };
+
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  }
+
+
+  function startOfficialPanelResize(event: PointerEvent) {
+    if (!officialTwinExists || !officialPanelOpen) return;
+
+    const handle = event.currentTarget as HTMLElement;
+    const panel = handle.closest(
+      '.official-twin-panel'
+    ) as HTMLElement | null;
+    const workspace = handle.closest(
+      '.workspace'
+    ) as HTMLElement | null;
+
+    if (!panel || !workspace) return;
+
+    event.preventDefault();
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const resize = (clientX: number) => {
+      const workspaceRect = workspace.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+
+      const inspector = workspace.querySelector(
+        '.inspector-panel'
+      ) as HTMLElement | null;
+
+      const localPanel = workspace.querySelector(
+        '.txt-panel'
+      ) as HTMLElement | null;
+
+      const officialToggle = workspace.querySelector(
+        '.official-grid-toggle'
+      ) as HTMLElement | null;
+
+      const inspectorWidth =
+        inspector?.getBoundingClientRect().width ?? 330;
+
+      const localWidth =
+        txtPanelOpen
+          ? (localPanel?.getBoundingClientRect().width ?? 390)
+          : 0;
+
+      const toggleWidth =
+        officialToggle?.getBoundingClientRect().width ?? 30;
+
+      const minPanelWidth = 260;
+      const minGraphWidth = 280;
+
+      const maxPanelWidth = Math.max(
+        minPanelWidth,
+        Math.min(
+          760,
+          workspaceRect.width
+            - inspectorWidth
+            - toggleWidth
+            - localWidth
+            - minGraphWidth
+        )
+      );
+
+      const desiredWidth = clientX - panelRect.left;
+
+      officialPanelWidth = Math.round(
         Math.max(
           minPanelWidth,
           Math.min(maxPanelWidth, desiredWidth)
@@ -1868,6 +2160,7 @@
     </div>
 
     <div class="header-publish-actions">
+      <!-- 104: admin conserva envío oficial y propuesta -->
       {#if isAdminSession}
         <button
           type="button"
@@ -1875,7 +2168,15 @@
           onclick={() => publishCurrentScript('official')}
           disabled={publishBusy}
           title="Enviar este guion a los oficiales"
-        >{publishBusy ? 'Publicando…' : 'Publicar oficial'}</button>
+        >{publishBusy ? 'Enviando…' : 'Enviar oficial'}</button>
+
+        <button
+          type="button"
+          class="header-button primary"
+          onclick={() => publishCurrentScript('proposal')}
+          disabled={publishBusy}
+          title="Enviar este guion como propuesta"
+        >Enviar propuesta</button>
       {:else}
         <button
           type="button"
@@ -1891,9 +2192,16 @@
   <main
     class="workspace"
     class:txt-closed={!txtPanelOpen}
-    style={txtPanelWidth === null
-      ? undefined
-      : `--txt-panel-width: ${txtPanelWidth}px;`}
+    class:official-available={officialTwinExists}
+    class:official-open={officialTwinExists && officialPanelOpen}
+    style={[
+      txtPanelWidth === null
+        ? ''
+        : `--txt-panel-width: ${txtPanelWidth}px;`,
+      officialPanelWidth === null
+        ? ''
+        : `--official-panel-width: ${officialPanelWidth}px;`
+    ].filter(Boolean).join(' ') || undefined}
   >
     <aside class="inspector-panel">
       <InspectorView
@@ -1918,6 +2226,53 @@
         onRemoveOption={removeOption}
       />
     </aside>
+
+<!-- 111: OFICIAL entre Inspector y Grafo -->
+    {#if officialTwinExists}
+      <button
+        type="button"
+        class="official-edge-toggle official-grid-toggle"
+        onclick={() => (officialPanelOpen = !officialPanelOpen)}
+        aria-label={officialPanelOpen
+          ? 'Cerrar guion oficial'
+          : 'Abrir guion oficial'}
+        title={officialTwinMatches
+          ? 'Guion oficial · igual al local'
+          : 'Guion oficial · diferente del local'}
+      >
+        <span class="official-edge-arrow">
+          {officialPanelOpen ? '‹' : '›'}
+        </span>
+        <span class="official-edge-label">OFICIAL</span>
+      </button>
+    {/if}
+
+    {#if officialTwinExists && officialPanelOpen}
+      <aside class="official-twin-panel">
+        <!-- 112: tirador de ancho del panel oficial -->
+        <button
+          type="button"
+          class="official-resize-handle"
+          onpointerdown={startOfficialPanelResize}
+          aria-label="Cambiar ancho del panel oficial"
+          title="Arrastrar para cambiar el ancho"
+        ></button>
+
+        <div
+          class:official-twin-different={!officialTwinMatches}
+          class="official-twin-status"
+        >
+          {officialTwinMatches ? 'IGUAL AL LOCAL' : 'DIFERENTE DEL LOCAL'}
+        </div>
+
+        <div
+          class="official-twin-editor"
+          aria-label="Guion oficial, solo lectura"
+        >
+          <pre class="official-twin-code">{@html highlightedOfficialTwinText}</pre>
+        </div>
+      </aside>
+    {/if}
 
     <section
       class="canvas"
@@ -2018,7 +2373,7 @@
       ></button>
     {/if}
 
-    <button
+        <button
       type="button"
       class="txt-edge-toggle"
       class:txt-edge-open={txtPanelOpen}
@@ -2036,19 +2391,23 @@
       class:panel-collapsed={!txtPanelOpen}
       aria-hidden={!txtPanelOpen}
     >
-      <div class="txt-heading txt-panel-heading">
-        <div>
-          <strong>TXT</strong>
-          <small>{currentFilename}</small>
-        </div>
-      </div>
+      <!-- 103: TXT y nombre redundantes eliminados del panel -->
+      <div class="script-editor-layer">
+        <pre
+          class="script-highlight"
+          bind:this={scriptHighlight}
+          aria-hidden="true"
+        >{@html highlightedScriptText}</pre>
 
-      <textarea
-        class="script-preview"
-        value={editableScriptText}
-        oninput={(event) => scheduleEditableScriptParse(event.currentTarget.value)}
-        spellcheck="false"
-      ></textarea>
+        <textarea
+          class="script-preview script-input"
+          bind:this={scriptTextarea}
+          value={editableScriptText}
+          oninput={(event) => scheduleEditableScriptParse(event.currentTarget.value)}
+          onscroll={syncScriptHighlightScroll}
+          spellcheck="false"
+        ></textarea>
+      </div>
 
       <div
         class:text-sync-warning={textHasPendingChanges}
