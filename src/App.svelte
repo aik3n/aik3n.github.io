@@ -48,6 +48,8 @@
       id: 'inicio',
       type: 'options',
       position: { x: 180, y: 100 },
+      // 115: nodo inicial no se puede arrastrar
+      draggable: false,
       data: {
         title: 'INICIO',
         text: 'Hola, aventurero.',
@@ -1786,6 +1788,7 @@
         id: node.id,
         type: classifyNodeType(data),
         position: { x: 0, y: 0 },
+        draggable: index !== 0,
         data
       } as DialogueNode;
     });
@@ -2259,13 +2262,6 @@
         ></button>
 
         <div
-          class:official-twin-different={!officialTwinMatches}
-          class="official-twin-status"
-        >
-          {officialTwinMatches ? 'IGUAL AL LOCAL' : 'DIFERENTE DEL LOCAL'}
-        </div>
-
-        <div
           class="official-twin-editor"
           aria-label="Guion oficial, solo lectura"
         >
@@ -2392,6 +2388,16 @@
       aria-hidden={!txtPanelOpen}
     >
       <!-- 103: TXT y nombre redundantes eliminados del panel -->
+      <!-- 116: comparación mostrada en el panel local -->
+      {#if officialTwinExists}
+        <div
+          class:official-twin-different={!officialTwinMatches}
+          class="official-twin-status"
+        >
+          {officialTwinMatches ? 'IGUAL AL OFICIAL' : 'DIFERENTE DEL OFICIAL'}
+        </div>
+      {/if}
+
       <div class="script-editor-layer">
         <pre
           class="script-highlight"
