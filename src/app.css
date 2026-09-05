@@ -2476,3 +2476,47 @@ main.workspace.official-available .official-grid-toggle {
     left: 285px !important;
   }
 }
+
+/* 119: botón de borrado remoto en rojo */
+.delete-remote-button {
+  border-color: #c84f4f;
+  background: #b83f3f;
+  color: #fff;
+}
+
+.delete-remote-button:hover:not(:disabled) {
+  border-color: #a93636;
+  background: #a93636;
+}
+
+.delete-remote-button:disabled {
+  opacity: 0.55;
+}
+
+/* 122: nombre claramente editable + borrar junto al nombre */
+
+.brand-filename-input {
+  width: 190px;
+  min-width: 130px;
+  border: 1px solid #8290a6;
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: #ffffff;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.brand-filename-input:hover {
+  border-color: #aebbd0;
+}
+
+.brand-filename-input:focus {
+  border-color: #7fa6df;
+  box-shadow: 0 0 0 3px rgb(127 166 223 / 22%);
+}
+
+.brand-filename-input::placeholder {
+  color: #8793a6;
+  font-weight: 500;
+}

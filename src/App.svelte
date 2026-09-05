@@ -525,6 +525,16 @@
   // 066: envío simple; usuario → propuestas, admin → oficiales.
   let publishBusy = $state(false);
 
+  // 117: origen remoto abierto + borrado admin
+  type OpenedRemoteSource = {
+    kind: 'official' | 'proposal';
+    filename: string;
+    path: string;
+  };
+
+  let openedRemoteSource = $state.raw<OpenedRemoteSource | null>(null);
+  let deleteRemoteBusy = $state(false);
+
   // 067: limpieza de Validar antiguo
   let isAdminSession = $state(
     typeof sessionStorage !== 'undefined'
@@ -1967,8 +1977,37 @@
       sessionStorage.getItem('zenode:github-source-pending') === 'true';
     sessionStorage.removeItem('zenode:github-source-pending');
 
+    let pendingRemoteSource: OpenedRemoteSource | null = null;
+
     if (!openingFromGithub) {
       sessionStorage.removeItem('zenode:github-source');
+    } else {
+      try {
+        const rawSource = sessionStorage.getItem('zenode:github-source');
+        const source = rawSource
+          ? JSON.parse(rawSource) as {
+              repository?: string;
+              path?: string;
+            }
+          : null;
+
+        const kind =
+          source?.repository === 'aik3n/ZeMobida_guiones'
+            ? 'official'
+            : source?.repository === 'aik3n/ZeMobida_guiones_propuestas'
+              ? 'proposal'
+              : null;
+
+        if (kind) {
+          pendingRemoteSource = {
+            kind,
+            filename: file.name,
+            path: source?.path || file.name
+          };
+        }
+      } catch {
+        pendingRemoteSource = null;
+      }
     }
 
     const text = await file.text();
@@ -1995,6 +2034,7 @@
     }
     selectedEdgeId = '';
     currentFilename = file.name;
+    openedRemoteSource = pendingRemoteSource;
     resetEditHistory();
     recordHistorySnapshot();
     // Al abrir un guion conservamos las posiciones guardadas, pero siempre
@@ -2091,6 +2131,103 @@
     }
   }
 
+  async function deleteOpenedRemoteScript() {
+    if (
+      !isAdminSession
+      || !openedRemoteSource
+      || deleteRemoteBusy
+      || publishBusy
+    ) {
+      return;
+    }
+
+    const source = openedRemoteSource;
+    const label =
+      source.kind === 'official' ? 'oficial' : 'propuesta';
+
+    if (currentFilename.trim() !== source.filename) {
+      statusMessage =
+        'El nombre del guion ha cambiado. Vuelve a abrir el remoto antes de borrarlo.';
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Borrar ${label} "${source.filename}"?`
+      + '\n\nEsta acción elimina el archivo del repositorio remoto.'
+    );
+
+    if (!confirmed) return;
+
+    deleteRemoteBusy = true;
+    statusMessage =
+      source.kind === 'official'
+        ? `Borrando oficial: ${source.filename}…`
+        : `Borrando propuesta: ${source.filename}…`;
+
+    try {
+      // 118: borrado remoto por POST
+      const deleteRoute =
+        source.kind === 'official'
+          ? 'delete-official'
+          : 'delete-proposal';
+
+      const response = await fetch(
+        `${PUBLISHER_URL}/${deleteRoute}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            filename: source.filename,
+            path: source.path
+          })
+        }
+      );
+
+      let result: {
+        ok?: boolean;
+        error?: string;
+        filename?: string;
+      } = {};
+
+      try {
+        result = await response.json();
+      } catch {
+        // Si el Worker no devuelve JSON, usamos el estado HTTP.
+      }
+
+      if (!response.ok || !result.ok) {
+        throw new Error(
+          result.error
+          || `No se pudo borrar el guion (${response.status}).`
+        );
+      }
+
+      statusMessage =
+        source.kind === 'official'
+          ? `Oficial borrado: ${source.filename}`
+          : `Propuesta borrada: ${source.filename}`;
+
+      openedRemoteSource = null;
+      sessionStorage.removeItem('zenode:github-source');
+
+      if (source.kind === 'official') {
+        officialTwinText = '';
+        officialTwinExists = false;
+        officialTwinError = '';
+        officialPanelOpen = false;
+      }
+    } catch (error) {
+      statusMessage =
+        error instanceof Error
+          ? `Error al borrar: ${error.message}`
+          : 'Error al borrar el guion remoto.';
+    } finally {
+      deleteRemoteBusy = false;
+    }
+  }
+
   function saveScript() {
     const blob = new Blob([editableScriptText], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -2135,9 +2272,30 @@
         class="brand-filename-input"
         bind:value={currentFilename}
         placeholder="guion.txt"
-        aria-label="Nombre del guion"
-        title="Nombre del guion"
+        aria-label="Nombre del guion editable"
+        title="Nombre del guion · editable"
       />
+
+      <!-- 122: borrar junto al nombre -->
+      {#if isAdminSession
+        && openedRemoteSource
+        && currentFilename.trim() === openedRemoteSource.filename}
+        <button
+          type="button"
+          class="header-button delete-remote-button"
+          onclick={deleteOpenedRemoteScript}
+          disabled={publishBusy || deleteRemoteBusy}
+          title={openedRemoteSource.kind === 'official'
+            ? 'Borrar este guion del repositorio oficial'
+            : 'Borrar este guion del repositorio de propuestas'}
+        >
+          {deleteRemoteBusy
+            ? 'Borrando…'
+            : openedRemoteSource.kind === 'official'
+              ? 'Borrar oficial'
+              : 'Borrar propuesta'}
+        </button>
+      {/if}
     </div>
 
     <div class="header-local-actions">
@@ -2169,7 +2327,7 @@
           type="button"
           class="header-button publish-official-button"
           onclick={() => publishCurrentScript('official')}
-          disabled={publishBusy}
+          disabled={publishBusy || deleteRemoteBusy}
           title="Enviar este guion a los oficiales"
         >{publishBusy ? 'Enviando…' : 'Enviar oficial'}</button>
 
@@ -2177,9 +2335,10 @@
           type="button"
           class="header-button primary"
           onclick={() => publishCurrentScript('proposal')}
-          disabled={publishBusy}
+          disabled={publishBusy || deleteRemoteBusy}
           title="Enviar este guion como propuesta"
         >Enviar propuesta</button>
+
       {:else}
         <button
           type="button"
@@ -2426,6 +2585,7 @@
         El TXT es la fuente de verdad. Los cambios se interpretan automáticamente
         y el grafo conserva el último estado válido mientras estás escribiendo.
       </div>
+
     </aside>
   </main>
 </div>
