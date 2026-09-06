@@ -2520,3 +2520,120 @@ main.workspace.official-available .official-grid-toggle {
   color: #8793a6;
   font-weight: 500;
 }
+
+/* 123: selectores mapa + personaje */
+.brand-block {
+  align-items: center !important;
+}
+
+.dialogue-target-select {
+  width: auto;
+  max-width: 155px;
+  height: 32px;
+  border: 1px solid #4b5870;
+  border-radius: 7px;
+  padding: 4px 26px 4px 8px;
+  background: #1b2535;
+  color: #dbe3ef;
+  font-size: 12px;
+  font-weight: 650;
+  outline: none;
+  cursor: pointer;
+}
+
+.dialogue-target-select:hover:not(:disabled) {
+  border-color: #77869d;
+}
+
+.dialogue-target-select:focus {
+  border-color: #7fa6df;
+  box-shadow: 0 0 0 3px rgb(127 166 223 / 16%);
+}
+
+.dialogue-target-select:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.dialogue-map-select {
+  max-width: 145px;
+}
+
+.dialogue-pnj-select {
+  max-width: 145px;
+}
+
+/* 124: menú desplegable Archivo */
+.header-file-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.header-file-menu > summary {
+  list-style: none;
+}
+
+.header-file-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.header-file-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.header-file-menu-arrow {
+  color: inherit;
+  font-size: 10px;
+  transition: transform 120ms ease;
+}
+
+.header-file-menu[open] .header-file-menu-arrow {
+  transform: rotate(180deg);
+}
+
+.header-file-menu-panel {
+  position: absolute;
+  z-index: 200;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: 190px;
+  transform: translateX(-50%);
+  overflow: hidden;
+  border: 1px solid #46546a;
+  border-radius: 8px;
+  background: #182233;
+  box-shadow: 0 10px 26px rgb(0 0 0 / 28%);
+}
+
+.header-file-menu-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #2d394c;
+  border-radius: 0;
+  padding: 10px 12px;
+  background: transparent;
+  color: #e7edf6;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.header-file-menu-item:last-child {
+  border-bottom: 0;
+}
+
+.header-file-menu-item:hover {
+  background: #263348;
+}
+
+/* 125: separador del menú Archivo */
+.header-file-menu-separator {
+  height: 1px;
+  margin: 2px 0;
+  background: #344156;
+}

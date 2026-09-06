@@ -1961,6 +1961,208 @@
     }, 400);
   }
 
+  // 123: ayuda de nombre por mapa + personaje
+  const DIALOGUE_TARGETS = [
+    {
+      id: 'aldea',
+      label: 'Aldea · A1',
+      pnjs: [
+        'secretaria',
+        'chef',
+        'ejecutivo',
+        'limpiador',
+        'medico',
+        'obrero_madera'
+      ]
+    },
+    {
+      id: 'menzo',
+      label: 'Menzo · A1',
+      pnjs: [
+        'dinin',
+        'drizzt',
+        'zaknafein',
+        'vierna',
+        'malicia'
+      ]
+    },
+    {
+      id: 'arauzo_de_salce',
+      label: 'Arauzo de Salce · A2',
+      pnjs: [
+        'profesora',
+        'reportera',
+        'secretaria',
+        'cientifico',
+        'repartidor'
+      ]
+    },
+    {
+      id: 'pueblo',
+      label: 'Pueblo',
+      pnjs: [
+        'javi',
+        'samu'
+      ]
+    },
+    {
+      id: 'txan',
+      label: 'Txan',
+      pnjs: [
+        'juan',
+        'charo',
+        'luis',
+        'peter',
+        'paco'
+      ]
+    },
+    {
+      id: 'urrea',
+      label: 'Urrea',
+      pnjs: [
+        'juan',
+        'charo',
+        'luis',
+        'peter',
+        'paco'
+      ]
+    }
+  ] as const;
+
+  let dialogueTargetMap = $state('');
+  let dialogueTargetPnj = $state('');
+
+  function currentDialogueTargetPnjs(): readonly string[] {
+    return DIALOGUE_TARGETS.find(
+      (target) => target.id === dialogueTargetMap
+    )?.pnjs ?? [];
+  }
+
+  function humanizeDialogueTarget(value: string) {
+    const text = value.replaceAll('_', ' ');
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  function selectDialogueTargetMap(value: string) {
+    dialogueTargetMap = value;
+    dialogueTargetPnj = '';
+  }
+
+  // 126: cargar remoto al elegir mapa + personaje
+  async function loadSelectedDialogueTarget() {
+    if (!dialogueTargetMap || !dialogueTargetPnj) {
+      return;
+    }
+
+    if (!fileInput) {
+      statusMessage = 'No se puede cargar el guion todavía.';
+      return;
+    }
+
+    const filename = `${dialogueTargetMap}_${dialogueTargetPnj}.txt`;
+
+    const sources = [
+      {
+        repository: 'aik3n/ZeMobida_guiones',
+        rawBase:
+          'https://raw.githubusercontent.com/aik3n/ZeMobida_guiones/main',
+        label: 'oficial'
+      },
+      {
+        repository: 'aik3n/ZeMobida_guiones_propuestas',
+        rawBase:
+          'https://raw.githubusercontent.com/aik3n/ZeMobida_guiones_propuestas/main',
+        label: 'propuesta'
+      }
+    ] as const;
+
+    statusMessage = `Buscando ${filename}…`;
+
+    try {
+      for (const source of sources) {
+        const response = await fetch(
+          `${source.rawBase}/${encodeURIComponent(filename)}`,
+          { cache: 'no-store' }
+        );
+
+        if (response.status === 404) {
+          continue;
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            `No se pudo consultar ${source.label} (${response.status}).`
+          );
+        }
+
+        const text = await response.text();
+        const file = new File(
+          [text],
+          filename,
+          { type: 'text/plain;charset=utf-8' }
+        );
+
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+
+        sessionStorage.setItem(
+          'zenode:github-source',
+          JSON.stringify({
+            repository: source.repository,
+            branch: 'main',
+            path: filename,
+            sha: ''
+          })
+        );
+        sessionStorage.setItem(
+          'zenode:github-source-pending',
+          'true'
+        );
+
+        fileInput.files = transfer.files;
+        fileInput.dispatchEvent(
+          new Event('change', { bubbles: true })
+        );
+        return;
+      }
+
+      statusMessage =
+        `No existe guion oficial ni propuesta para ${filename}.`;
+    } catch (error) {
+      statusMessage =
+        error instanceof Error
+          ? `Error al cargar: ${error.message}`
+          : 'Error al cargar el guion.';
+    }
+  }
+
+  function selectDialogueTargetPnj(value: string) {
+    dialogueTargetPnj = value;
+
+    if (!dialogueTargetMap || !dialogueTargetPnj) {
+      return;
+    }
+
+    void loadSelectedDialogueTarget();
+  }
+
+  function syncDialogueTargetFromFilename(filename: string) {
+    const normalized = filename.trim().toLowerCase();
+
+    for (const target of DIALOGUE_TARGETS) {
+      for (const pnj of target.pnjs) {
+        if (`${target.id}_${pnj}.txt` === normalized) {
+          dialogueTargetMap = target.id;
+          dialogueTargetPnj = pnj;
+          return;
+        }
+      }
+    }
+
+    dialogueTargetMap = '';
+    dialogueTargetPnj = '';
+  }
+
   function openFilePicker() {
     fileInput?.click();
   }
@@ -2034,6 +2236,7 @@
     }
     selectedEdgeId = '';
     currentFilename = file.name;
+    syncDialogueTargetFromFilename(file.name);
     openedRemoteSource = pendingRemoteSource;
     resetEditHistory();
     recordHistorySnapshot();
@@ -2250,23 +2453,33 @@
       <strong>ZeMobida</strong>
 
       <!-- 062: cargas junto al titulo -->
-      <button
-        type="button"
-        class="header-button"
-        onclick={() => window.dispatchEvent(
-          new Event('zenode:load-official-scripts')
-        )}
-        title="Cargar un guion del repositorio oficial"
-      >Carga oficiales</button>
+      <!-- 123: selectores mapa + personaje -->
+      <select
+        class="dialogue-target-select dialogue-map-select"
+        value={dialogueTargetMap}
+        onchange={(event) => selectDialogueTargetMap(event.currentTarget.value)}
+        title="Elegir mapa para construir el nombre del guion"
+        aria-label="Mapa del guion"
+      >
+        <option value="">Mapa…</option>
+        {#each DIALOGUE_TARGETS as target}
+          <option value={target.id}>{target.label}</option>
+        {/each}
+      </select>
 
-      <button
-        type="button"
-        class="header-button"
-        onclick={() => window.dispatchEvent(
-          new Event('zenode:load-proposal-scripts')
-        )}
-        title="Cargar un guion del repositorio de propuestas"
-      >Carga propuestas</button>
+      <select
+        class="dialogue-target-select dialogue-pnj-select"
+        value={dialogueTargetPnj}
+        onchange={(event) => selectDialogueTargetPnj(event.currentTarget.value)}
+        disabled={!dialogueTargetMap}
+        title="Elegir personaje para construir el nombre del guion"
+        aria-label="Personaje del guion"
+      >
+        <option value="">Personaje…</option>
+        {#each currentDialogueTargetPnjs() as pnj}
+          <option value={pnj}>{humanizeDialogueTarget(pnj)}</option>
+        {/each}
+      </select>
 
       <input
         class="brand-filename-input"
@@ -2274,6 +2487,7 @@
         placeholder="guion.txt"
         aria-label="Nombre del guion editable"
         title="Nombre del guion · editable"
+        oninput={(event) => syncDialogueTargetFromFilename(event.currentTarget.value)}
       />
 
       <!-- 122: borrar junto al nombre -->
@@ -2298,18 +2512,48 @@
       {/if}
     </div>
 
-    <div class="header-local-actions">
-      <button
-        type="button"
-        class="header-button"
-        onclick={openFilePicker}
-      >Abrir guion local</button>
+    <!-- 124: abrir/guardar agrupados en menú Archivo -->
+    <details class="header-file-menu">
+      <summary
+        class="header-button header-file-menu-trigger"
+        title="Abrir o guardar un guion local"
+      >
+        Archivo
+        <span class="header-file-menu-arrow">▾</span>
+      </summary>
 
-      <button
-        type="button"
-        class="header-button"
-        onclick={saveScript}
-      >Guardar guion local</button>
+      <div class="header-file-menu-panel">
+        <!-- 125: cargas oficiales/propuestas dentro de Archivo -->
+        <button
+          type="button"
+          class="header-file-menu-item"
+          onclick={() => window.dispatchEvent(
+            new Event('zenode:load-official-scripts')
+          )}
+        >Carga oficiales</button>
+
+        <button
+          type="button"
+          class="header-file-menu-item"
+          onclick={() => window.dispatchEvent(
+            new Event('zenode:load-proposal-scripts')
+          )}
+        >Carga propuestas</button>
+
+        <div class="header-file-menu-separator"></div>
+
+        <button
+          type="button"
+          class="header-file-menu-item"
+          onclick={openFilePicker}
+        >Abrir guion local</button>
+
+        <button
+          type="button"
+          class="header-file-menu-item"
+          onclick={saveScript}
+        >Guardar guion local</button>
+      </div>
 
       <input
         class="hidden-file-input"
@@ -2318,7 +2562,7 @@
         accept=".txt,text/plain"
         onchange={loadScriptFile}
       />
-    </div>
+    </details>
 
     <div class="header-publish-actions">
       <!-- 104: admin conserva envío oficial y propuesta -->
