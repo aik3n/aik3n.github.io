@@ -1962,7 +1962,13 @@
   }
 
   // 123: ayuda de nombre por mapa + personaje
-  const DIALOGUE_TARGETS = [
+  type DialogueTarget = {
+    id: string;
+    label: string;
+    pnjs: string[];
+  };
+
+  const FALLBACK_DIALOGUE_TARGETS: DialogueTarget[] = [
     {
       id: 'aldea',
       label: 'Aldea · A1',
@@ -2027,7 +2033,188 @@
         'paco'
       ]
     }
-  ] as const;
+  ];
+
+  let DIALOGUE_TARGETS = $state<DialogueTarget[]>(
+    FALLBACK_DIALOGUE_TARGETS.map((target) => ({
+      ...target,
+      pnjs: [...target.pnjs]
+    }))
+  );
+
+  // 129b: mapas y PNJ automáticos desde ZeMobida
+  function dialogueMapIdentity(filename: string) {
+    const basename = filename.replace(/\.tscn$/i, '');
+    const match = basename.match(/^(.*)_(a1|a2|b1|b2|c1|c2)$/i);
+
+    return {
+      logical: (match?.[1] ?? basename).toLowerCase(),
+      level: match?.[2]?.toUpperCase() ?? ''
+    };
+  }
+
+  function dialogueMapLabel(logical: string, levels: string[]) {
+    const human = logical
+      .replaceAll('_', ' ')
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+    return levels.length
+      ? `${human} · ${levels.join('/')}`
+      : human;
+  }
+
+  function extractPnjNamesFromTscn(text: string) {
+    const pnjResourceIds = new Set<string>();
+
+    for (const line of text.split('\n')) {
+      if (
+        line.startsWith('[ext_resource ')
+        && line.includes('path="res://escenas/pnj.tscn"')
+      ) {
+        const idMatch = line.match(/\bid="([^"]+)"/);
+
+        if (idMatch) {
+          pnjResourceIds.add(idMatch[1]);
+        }
+      }
+    }
+
+    if (pnjResourceIds.size === 0) {
+      return [];
+    }
+
+    const names: string[] = [];
+
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('[node name="')) {
+        continue;
+      }
+
+      const nameMatch = line.match(/^\[node name="([^"]+)"/);
+      const instanceMatch = line.match(
+        /instance=ExtResource\("([^"]+)"\)/
+      );
+
+      if (
+        nameMatch
+        && instanceMatch
+        && pnjResourceIds.has(instanceMatch[1])
+      ) {
+        names.push(nameMatch[1].trim().toLowerCase());
+      }
+    }
+
+    return [...new Set(names)].sort((a, b) =>
+      a.localeCompare(b, 'es')
+    );
+  }
+
+  async function refreshDialogueTargetsFromZeMobida() {
+    const directoryUrl =
+      'https://api.github.com/repos/aik3n/ZeMobida/contents/godot/mapas?ref=main';
+
+    try {
+      const directoryResponse = await fetch(
+        directoryUrl,
+        { cache: 'no-store' }
+      );
+
+      if (!directoryResponse.ok) {
+        throw new Error(
+          `GitHub respondió ${directoryResponse.status}`
+        );
+      }
+
+      const entries = await directoryResponse.json() as Array<{
+        name?: string;
+        type?: string;
+        download_url?: string | null;
+      }>;
+
+      const scenes = entries.filter(
+        (entry) =>
+          entry.type === 'file'
+          && typeof entry.name === 'string'
+          && entry.name.toLowerCase().endsWith('.tscn')
+          && typeof entry.download_url === 'string'
+      );
+
+      const loaded = await Promise.all(
+        scenes.map(async (scene) => {
+          const response = await fetch(
+            scene.download_url as string,
+            { cache: 'no-store' }
+          );
+
+          if (!response.ok) {
+            throw new Error(
+              `${scene.name}: HTTP ${response.status}`
+            );
+          }
+
+          return {
+            filename: scene.name as string,
+            text: await response.text()
+          };
+        })
+      );
+
+      const grouped = new Map<
+        string,
+        { levels: Set<string>; pnjs: Set<string> }
+      >();
+
+      for (const scene of loaded) {
+        const identity = dialogueMapIdentity(scene.filename);
+        const pnjs = extractPnjNamesFromTscn(scene.text);
+
+        if (!grouped.has(identity.logical)) {
+          grouped.set(identity.logical, {
+            levels: new Set<string>(),
+            pnjs: new Set<string>()
+          });
+        }
+
+        const group = grouped.get(identity.logical)!;
+
+        if (identity.level) {
+          group.levels.add(identity.level);
+        }
+
+        for (const pnj of pnjs) {
+          group.pnjs.add(pnj);
+        }
+      }
+
+      const nextTargets: DialogueTarget[] = [...grouped.entries()]
+        .map(([logical, group]) => {
+          const levels = [...group.levels].sort();
+
+          return {
+            id: logical,
+            label: dialogueMapLabel(logical, levels),
+            pnjs: [...group.pnjs].sort((a, b) =>
+              a.localeCompare(b, 'es')
+            )
+          };
+        })
+        .filter((target) => target.pnjs.length > 0)
+        .sort((a, b) => a.label.localeCompare(b.label, 'es'));
+
+      if (nextTargets.length === 0) {
+        throw new Error('No se encontraron mapas con PNJ.');
+      }
+
+      DIALOGUE_TARGETS = nextTargets;
+      syncDialogueTargetFromFilename(currentFilename);
+    } catch (error) {
+      console.warn(
+        'ZeNode: no se pudo actualizar mapas/PNJ; se usa la lista local.',
+        error
+      );
+    }
+  }
+
 
   let dialogueTargetMap = $state('');
   let dialogueTargetPnj = $state('');
@@ -2162,6 +2349,11 @@
     dialogueTargetMap = '';
     dialogueTargetPnj = '';
   }
+
+  $effect(() => {
+    void refreshDialogueTargetsFromZeMobida();
+  });
+
 
   function openFilePicker() {
     fileInput?.click();
@@ -2449,8 +2641,61 @@
 
 <div class="app-shell">
   <header>
+
     <div class="brand-block">
       <strong>ZeMobida</strong>
+      <!-- 128: ZeMobida primero, Archivo después -->
+      <!-- 124: abrir/guardar agrupados en menú Archivo -->
+      <details class="header-file-menu">
+        <summary
+          class="header-button header-file-menu-trigger"
+          title="Abrir o guardar un guion local"
+        >
+          Archivo
+          <span class="header-file-menu-arrow">▾</span>
+        </summary>
+
+        <div class="header-file-menu-panel">
+          <!-- 125: cargas oficiales/propuestas dentro de Archivo -->
+          <button
+            type="button"
+            class="header-file-menu-item"
+            onclick={() => window.dispatchEvent(
+              new Event('zenode:load-official-scripts')
+            )}
+          >Carga oficiales</button>
+
+          <button
+            type="button"
+            class="header-file-menu-item"
+            onclick={() => window.dispatchEvent(
+              new Event('zenode:load-proposal-scripts')
+            )}
+          >Carga propuestas</button>
+
+          <div class="header-file-menu-separator"></div>
+
+          <button
+            type="button"
+            class="header-file-menu-item"
+            onclick={openFilePicker}
+          >Abrir guion local</button>
+
+          <button
+            type="button"
+            class="header-file-menu-item"
+            onclick={saveScript}
+          >Guardar guion local</button>
+        </div>
+
+        <input
+          class="hidden-file-input"
+          bind:this={fileInput}
+          type="file"
+          accept=".txt,text/plain"
+          onchange={loadScriptFile}
+        />
+      </details>
 
       <!-- 062: cargas junto al titulo -->
       <!-- 123: selectores mapa + personaje -->
@@ -2512,57 +2757,6 @@
       {/if}
     </div>
 
-    <!-- 124: abrir/guardar agrupados en menú Archivo -->
-    <details class="header-file-menu">
-      <summary
-        class="header-button header-file-menu-trigger"
-        title="Abrir o guardar un guion local"
-      >
-        Archivo
-        <span class="header-file-menu-arrow">▾</span>
-      </summary>
-
-      <div class="header-file-menu-panel">
-        <!-- 125: cargas oficiales/propuestas dentro de Archivo -->
-        <button
-          type="button"
-          class="header-file-menu-item"
-          onclick={() => window.dispatchEvent(
-            new Event('zenode:load-official-scripts')
-          )}
-        >Carga oficiales</button>
-
-        <button
-          type="button"
-          class="header-file-menu-item"
-          onclick={() => window.dispatchEvent(
-            new Event('zenode:load-proposal-scripts')
-          )}
-        >Carga propuestas</button>
-
-        <div class="header-file-menu-separator"></div>
-
-        <button
-          type="button"
-          class="header-file-menu-item"
-          onclick={openFilePicker}
-        >Abrir guion local</button>
-
-        <button
-          type="button"
-          class="header-file-menu-item"
-          onclick={saveScript}
-        >Guardar guion local</button>
-      </div>
-
-      <input
-        class="hidden-file-input"
-        bind:this={fileInput}
-        type="file"
-        accept=".txt,text/plain"
-        onchange={loadScriptFile}
-      />
-    </details>
 
     <div class="header-publish-actions">
       <!-- 104: admin conserva envío oficial y propuesta -->
